@@ -1,6 +1,10 @@
 from datetime import date
 from decimal import Decimal
 
+import pytest
+
+pytest.importorskip("jinja2")  # el motor de plantillas requiere Jinja2
+
 from conftest import TEMPLATES_DIR
 
 from payment_reminders.models import Invoice
