@@ -15,6 +15,15 @@ def build_backend(kind: str, options: dict, columns: "ColumnMap") -> "Spreadshee
     kind = (kind or "csv").lower()
     if kind == "csv":
         return CsvSpreadsheet(path=options["path"], columns=columns)
+    if kind in ("xlsx", "excel"):
+        from .xlsx_backend import XlsxSpreadsheet
+
+        return XlsxSpreadsheet(
+            path=options["path"],
+            columns=columns,
+            worksheet=options.get("worksheet"),
+            header_row=int(options.get("header_row", 1)),
+        )
     if kind in ("google_sheets", "google", "sheets"):
         from .google_sheets import GoogleSheetsSpreadsheet
 
