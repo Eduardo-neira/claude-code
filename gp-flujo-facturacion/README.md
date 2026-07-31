@@ -1,37 +1,60 @@
 # GP · Flujo de facturación automática post-servicio
 
-Automatización que **emite una factura CFDI personalizada después de cada
-servicio**, calculando la tarifa según **geocerca (ubicación)** y **tipo de
-servicio**, integrando contratos, coordenadas de Google Maps y Facturama.
+Automatización que **emite el comprobante correcto después de cada servicio**
+(CFDI si el contrato es fiscal, remisión si no), calculando la tarifa según
+**geocerca (ubicación)** y **tipo de servicio**, integrando contratos,
+coordenadas de Google Maps y Facturama.
 
 Stack: **Supabase (PostGIS)** + **n8n** + **Facturama (CFDI 4.0)** + **AppSheet**
 + **Troncalnet/WhatsApp**.
 
-> Diseño operativo completo (objetivo, riesgos, métricas): [`docs/diseno-flujo.md`](docs/diseno-flujo.md).
+> **Estado:** la migración `0001` está **aplicada y validada** contra el proyecto
+> Supabase `gp-inventario` (schema real), incluidos casos reales de contrato
+> FACTURA y REMISION. Diseño completo: [`docs/diseno-flujo.md`](docs/diseno-flujo.md).
 
 ---
 
-## Cómo funciona (resumen)
+## Cómo funciona
 
 ```
-AppSheet (operador cierra servicio + GPS)
+AppSheet (operador cierra servicio + checkout GPS)
         │
         ▼
-Supabase  servicios.estado = 'completado'
-        │   (solo si contrato con pago_confirmado = true)
+Supabase  servicios.completado = true
+        │   (solo si el contrato tiene un cobro 'pagado')
         ▼
 n8n  cada 10 min → vista servicios_por_facturar
         │
         ▼
-Supabase  calcular_tarifa_servicio()   ← PostGIS resuelve la geocerca
-        │   base × modificador + recargo_zona − descuento + IVA
+Supabase  calcular_tarifa_servicio(servicio_id)   ← PostGIS resuelve la geocerca
+        │   base(contrato) × modificador + recargo_zona (+ IVA si FACTURA)
         ▼
-Facturama  timbra CFDI 4.0
+   ¿es_fiscal?
+     ├─ FACTURA  → Facturama timbra CFDI 4.0 → registra factura → WhatsApp
+     └─ REMISION → registra comprobante no fiscal → WhatsApp
         │
-        ├─► Supabase  registra factura + marca servicio 'facturado'
-        │        └─► WhatsApp al cliente con su factura
-        └─► (error) registra estado 'error' + alerta a Eduardo
+        └─ (error de timbrado) → alerta a Eduardo
 ```
+
+---
+
+## Diseñado sobre el schema REAL de `gp-inventario`
+
+No hay tabla `clientes` (el cliente es `contratos.cliente`, texto). Las
+coordenadas y el precio ya viven en el contrato. La migración es **aditiva**:
+
+**Agrega:**
+- Extensión **PostGIS**.
+- **`geocercas`** — zonas por polígono (SRID 4326) con recargo `fijo`/`porcentaje`/`ninguno`, `sucursal_id` y `prioridad`.
+- **`tipos_servicio_modificador`** — multiplicador por `servicios.tipo` (LIMPIEZA=1, EXTRA=1.5, …).
+- Columnas nulas en **`facturas`**: `servicio_id`, `geocerca_id`, `recargo_zona`, `desglose`.
+- **`resolver_geocerca(lat, lng, sucursal_id)`** y **`calcular_tarifa_servicio(servicio_id)`** (fuente única del precio).
+- Vista **`servicios_por_facturar`** (aplica la regla de cobro anticipado vía `cobros.estado='pagado'`).
+
+**Reutiliza (no toca):** `contratos` (precio_sin_iva, precio_lavamanos, tiene_lavamanos, datos_fiscales, latitud/longitud), `servicios` (tipo, completado, checkout_lat/lng), `facturas`, `cobros`, `sucursales`.
+
+**Regla fiscal detectada en los datos:** `contratos.datos_fiscales = 'FACTURA'`
+lleva IVA y se timbra CFDI; `'REMISION'` es no fiscal, sin IVA.
 
 ---
 
@@ -39,97 +62,50 @@ Facturama  timbra CFDI 4.0
 
 ```
 gp-flujo-facturacion/
-├── README.md                      ← este archivo
-├── docs/
-│   └── diseno-flujo.md            ← SOP: proceso, riesgos, métricas, siguiente acción
+├── README.md
+├── docs/diseno-flujo.md                       ← SOP: proceso, riesgos, métricas, pendientes
 ├── supabase/
-│   ├── migrations/
-│   │   └── 0001_facturacion_geocercas.sql   ← schema + funciones (aplicar en Supabase)
-│   └── seed_ejemplo.sql           ← geocercas y tarifas de EJEMPLO (ajustar a valores reales)
+│   ├── migrations/0001_facturacion_geocercas.sql   ← APLICADO en gp-inventario
+│   └── seed_ejemplo.sql                        ← geocercas de ejemplo (ajustar a reales)
 ├── logic/
-│   ├── geocerca.js                ← point-in-polygon (referencia de PostGIS)
-│   ├── calcular-tarifa.js         ← fórmula de tarifa (espejo de la función SQL)
-│   └── calcular-tarifa.test.js    ← 13 pruebas de la lógica de tarifa/geocerca
-├── n8n/
-│   └── workflow-facturacion-post-servicio.json  ← workflow importable
-└── package.json                   ← `npm test` corre las pruebas de la lógica
+│   ├── geocerca.js                             ← point-in-polygon (referencia de PostGIS)
+│   ├── calcular-tarifa.js                      ← fórmula (espejo de la función SQL)
+│   └── calcular-tarifa.test.js                 ← 13 pruebas (incluyen casos de la DB real)
+├── n8n/workflow-facturacion-post-servicio.json ← workflow importable (ramas CFDI/Remisión)
+└── package.json                                ← `npm test`
 ```
-
----
-
-## Componentes clave
-
-### Supabase (`0001_facturacion_geocercas.sql`)
-- **`geocercas`** — zonas por polígono (PostGIS, SRID 4326) con recargo `fijo`,
-  `porcentaje` o `ninguno` y `prioridad` para traslapes.
-- **`tarifas`** — precio base por `plaza × tipo_unidad × tipo_servicio`, con vigencia.
-- **`tipos_servicio`** — catálogo con `modificador` y claves SAT (prod/serv, unidad).
-- **`servicios`** — servicios ejecutados (fuente del disparo); `ubicacion` PostGIS
-  generada desde `lat/lng`.
-- **`facturas`** — registro de cada CFDI con desglose y tracking de Facturama.
-- **`resolver_geocerca(lat, lng, plaza)`** — geocerca que contiene el punto.
-- **`calcular_tarifa_servicio(servicio_id)`** — **fuente única de verdad del precio**;
-  devuelve el desglose completo en JSONB.
-- **`servicios_por_facturar`** — vista que aplica la regla de cobro anticipado.
-- Campos fiscales CFDI agregados a `clientes` y `contratos`.
-
-### Lógica JS (`logic/`)
-Implementación de referencia de la misma fórmula, en JS puro y **sin
-dependencias**. Sirve como Code node alterno en n8n y como red de seguridad:
-las pruebas fijan los números esperados para que la fórmula no derive.
-
-### Workflow n8n (`n8n/…json`)
-13 nodos: schedule → consulta → cálculo SQL → CFDI → Facturama → registro →
-WhatsApp, con rama de error → alerta a Eduardo. Importable; requiere conectar
-credenciales (marcadas como `REEMPLAZAR`).
-
----
-
-## Despliegue
-
-1. **Aplicar el schema** en Supabase (staging primero):
-   ```bash
-   psql "$SUPABASE_DB_URL" -f supabase/migrations/0001_facturacion_geocercas.sql
-   ```
-   O vía el MCP de Supabase (`apply_migration`).
-
-2. **Cargar tarifas y geocercas reales.** El seed es solo ejemplo:
-   ```bash
-   psql "$SUPABASE_DB_URL" -f supabase/seed_ejemplo.sql   # ← reemplazar antes con valores reales
-   ```
-   Ajustar precios y trazar los polígonos con coordenadas reales de cada zona.
-
-3. **Completar datos fiscales** de clientes (`regimen_fiscal`, `uso_cfdi`,
-   `codigo_postal_fiscal`) — necesarios para el CFDI 4.0.
-
-4. **Importar el workflow** en n8n y conectar credenciales:
-   - Postgres → Supabase de GP
-   - HTTP Basic Auth → Facturama
-   - HTTP → Troncalnet/WhatsApp
-   - Variable `EDUARDO_WHATSAPP` para alertas.
-
-5. **Probar con 1 servicio real** antes de activar el schedule de 10 min.
 
 ---
 
 ## Pruebas
 
 ```bash
-npm test          # node --test sobre logic/
+npm test          # node --test · 13/13 pass
 ```
 
-Cubren: point-in-polygon, prioridad en traslape, respeto de plaza, tarifa base,
-recargo fijo, recargo porcentaje, modificador de servicio, descuento de contrato,
-servicio no facturable, servicio sin coordenada y ausencia de tarifa.
+Incluyen los dos casos verificados contra la base real:
+- Contrato FACTURA en zona foránea → total **3770** (CFDI).
+- Contrato REMISION en zona base → total **2100** (sin IVA).
 
 ---
 
-## Notas de ajuste
+## Pendientes antes de activar
 
-- **Recargo por distancia (alternativa).** Este diseño usa polígonos. Si en el
-  futuro se prefiere cobrar por km desde el patio, se sustituye el bloque de
-  geocerca por una llamada a Google Distance Matrix; el resto del flujo no cambia.
-- **`ExpeditionPlace` / SAT.** El workflow usa valores de ejemplo (CP 64000,
-  claves SAT genéricas de servicios de limpieza). Validar con el contador de GP.
-- **IVA 16%** está fijo en la función y la lógica; parametrizar si hay servicios
-  a tasa distinta.
+1. **Datos fiscales del receptor** (RFC, régimen, uso CFDI, CP): no existen
+   estructurados en la DB. Definir dónde se capturan antes de timbrar CFDI reales.
+2. **Modelo de facturación**: confirmar por servicio (este flujo) vs mensual por `cobro`.
+3. **Polígonos y recargos reales** por zona (reemplazar el seed).
+4. Importar el workflow en n8n, conectar credenciales (Supabase, Facturama,
+   Troncalnet) y **probar con 1 servicio real**.
+
+---
+
+## Verificación rápida en Supabase
+
+```sql
+-- Geocerca de una coordenada real:
+select nombre, recargo_tipo, recargo_valor from resolver_geocerca(25.705905, -100.525547, 1);
+
+-- Tarifa de un servicio (requiere un servicio existente):
+select jsonb_pretty(calcular_tarifa_servicio(<servicio_id>));
+```

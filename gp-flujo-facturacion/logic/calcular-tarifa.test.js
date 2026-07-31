@@ -4,20 +4,20 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 
 const { puntoEnPoligono, resolverGeocerca } = require('./geocerca');
-const { calcularTarifaServicio, r2 } = require('./calcular-tarifa');
+const { calcularTarifaServicio, esFiscal, r2 } = require('./calcular-tarifa');
 
-// ---- Geocercas de ejemplo (cuadrados simples en [lng,lat]) -----------------
+// ---- Geocercas de ejemplo (sucursal 1 = MTY), en [lng,lat] -----------------
 const GEOCERCAS = [
   {
-    id: 'mty-base',
-    nombre: 'MTY Base',
-    plaza: 'MTY',
+    id: 1,
+    nombre: 'MTY Base — Área Metropolitana',
+    sucursal_id: 1,
     poligono: [
-      [-100.42, 25.55],
+      [-100.45, 25.55],
       [-100.20, 25.55],
       [-100.20, 25.80],
-      [-100.42, 25.80],
-      [-100.42, 25.55],
+      [-100.45, 25.80],
+      [-100.45, 25.55],
     ],
     recargo_tipo: 'ninguno',
     recargo_valor: 0,
@@ -25,15 +25,15 @@ const GEOCERCAS = [
     activa: true,
   },
   {
-    id: 'mty-poniente',
-    nombre: 'MTY Foránea Poniente',
-    plaza: 'MTY',
+    id: 2,
+    nombre: 'MTY Foránea Poniente — Santa Catarina/García',
+    sucursal_id: 1,
     poligono: [
-      [-100.70, 25.60],
-      [-100.42, 25.60],
-      [-100.42, 25.80],
-      [-100.70, 25.80],
-      [-100.70, 25.60],
+      [-100.75, 25.55],
+      [-100.45, 25.55],
+      [-100.45, 25.85],
+      [-100.75, 25.85],
+      [-100.75, 25.55],
     ],
     recargo_tipo: 'fijo',
     recargo_valor: 250,
@@ -41,15 +41,15 @@ const GEOCERCAS = [
     activa: true,
   },
   {
-    id: 'mty-norte',
-    nombre: 'MTY Foránea Norte',
-    plaza: 'MTY',
+    id: 3,
+    nombre: 'MTY Foránea % (ejemplo)',
+    sucursal_id: 1,
     poligono: [
-      [-100.42, 25.80],
       [-100.20, 25.80],
+      [-100.05, 25.80],
+      [-100.05, 25.95],
       [-100.20, 25.95],
-      [-100.42, 25.95],
-      [-100.42, 25.80],
+      [-100.20, 25.80],
     ],
     recargo_tipo: 'porcentaje',
     recargo_valor: 15,
@@ -58,164 +58,167 @@ const GEOCERCAS = [
   },
 ];
 
-const TIPO_LIMPIEZA = {
-  clave: 'limpieza',
-  modificador: 1.0,
-  facturable: true,
-  clave_prod_serv_sat: '80141600',
-  clave_unidad_sat: 'E48',
+const MODIFICADORES = {
+  LIMPIEZA: { modificador: 1.0, facturable: true },
+  EXTRA: { modificador: 1.5, facturable: true },
+  INSPECCION: { modificador: 0.0, facturable: false },
 };
-const TIPO_EXTRA = { ...TIPO_LIMPIEZA, clave: 'bombeo_extra', modificador: 1.5 };
-const TIPO_INSPECCION = { ...TIPO_LIMPIEZA, clave: 'inspeccion', facturable: false };
-
-const TARIFA_350 = { precio_unitario: 350 };
 
 // =============================================================================
-// Point-in-polygon
+// Point-in-polygon / resolución de geocerca
 // =============================================================================
 test('puntoEnPoligono: dentro y fuera', () => {
-  const cuadro = [
-    [0, 0],
-    [10, 0],
-    [10, 10],
-    [0, 10],
-  ];
+  const cuadro = [[0, 0], [10, 0], [10, 10], [0, 10]];
   assert.equal(puntoEnPoligono([5, 5], cuadro), true);
   assert.equal(puntoEnPoligono([15, 5], cuadro), false);
-  assert.equal(puntoEnPoligono([-1, 5], cuadro), false);
 });
 
-test('resolverGeocerca: punto en zona base MTY', () => {
-  const g = resolverGeocerca(25.67, -100.31, 'MTY', GEOCERCAS);
-  assert.equal(g.id, 'mty-base');
+test('resolverGeocerca: coordenada real contrato 1 -> zona base', () => {
+  const g = resolverGeocerca(25.639814, -100.384712, 1, GEOCERCAS);
+  assert.equal(g.id, 1);
 });
 
-test('resolverGeocerca: traslape -> gana menor prioridad (foránea)', () => {
-  // Punto que cae tanto en base como en poniente (ambas cubren -100.42..): usamos
-  // un punto claramente solo en poniente.
-  const g = resolverGeocerca(25.70, -100.55, 'MTY', GEOCERCAS);
-  assert.equal(g.id, 'mty-poniente');
+test('resolverGeocerca: coordenada real contrato 8 -> foránea poniente', () => {
+  const g = resolverGeocerca(25.705905, -100.525547, 1, GEOCERCAS);
+  assert.equal(g.id, 2);
 });
 
 test('resolverGeocerca: sin coordenada -> null', () => {
-  assert.equal(resolverGeocerca(null, null, 'MTY', GEOCERCAS), null);
+  assert.equal(resolverGeocerca(null, null, 1, GEOCERCAS), null);
 });
 
-test('resolverGeocerca: respeta la plaza', () => {
-  assert.equal(resolverGeocerca(25.67, -100.31, 'QRO', GEOCERCAS), null);
+test('resolverGeocerca: geocerca de otra sucursal no aplica', () => {
+  const soloSuc2 = [{ ...GEOCERCAS[0], sucursal_id: 2 }];
+  assert.equal(resolverGeocerca(25.64, -100.38, 1, soloSuc2), null);
 });
 
 // =============================================================================
-// Cálculo de tarifa
+// esFiscal (FACTURA vs REMISION)
 // =============================================================================
-test('tarifa base sin recargo ni descuento (zona base)', () => {
+test('esFiscal distingue FACTURA de REMISION', () => {
+  assert.equal(esFiscal('FACTURA'), true);
+  assert.equal(esFiscal('REMISION'), false);
+  assert.equal(esFiscal(null), false);
+});
+
+// =============================================================================
+// Cálculo de tarifa — replica los casos validados contra la DB real
+// =============================================================================
+test('contrato FACTURA en zona foránea (replica DB: total 3770)', () => {
   const d = calcularTarifaServicio({
-    servicio: { id: 's1', contrato_id: 'c1', tipo_servicio_clave: 'limpieza', cantidad_unidades: 2, lat: 25.67, lng: -100.31 },
-    contrato: { id: 'c1', cliente_id: 'cli1', plaza: 'MTY', tipo_unidad: 'estandar', descuento_porcentaje: 0 },
-    tipoServicio: TIPO_LIMPIEZA,
-    tarifa: TARIFA_350,
+    servicio: { id: 3, contrato_id: 8, tipo: 'LIMPIEZA', checkout_lat: 25.705905, checkout_lng: -100.525547 },
+    contrato: {
+      id: 8, cliente: 'PROMI-MEX TECNOLOGIAS', sucursal_id: null,
+      precio_sin_iva: 3000, precio_lavamanos: null, tiene_lavamanos: true,
+      datos_fiscales: 'FACTURA', latitud: 25.705905, longitud: -100.525547,
+    },
+    modificadores: MODIFICADORES,
     geocercas: GEOCERCAS,
   });
-  assert.equal(d.subtotal_base, 700); // 350 * 2
+  assert.equal(d.base, 3000);          // lavamanos null -> 0
+  assert.equal(d.recargo_zona, 250);   // geocerca foránea fija
+  assert.equal(d.subtotal, 3250);
+  assert.equal(d.es_fiscal, true);
+  assert.equal(d.documento, 'CFDI');
+  assert.equal(d.iva, 520);            // 3250 * 0.16
+  assert.equal(d.total, 3770);
+  assert.equal(d.geocerca_id, 2);
+});
+
+test('contrato REMISION en zona base (replica DB: total 2100, sin IVA)', () => {
+  const d = calcularTarifaServicio({
+    servicio: { id: 1, contrato_id: 1, tipo: 'LIMPIEZA', checkout_lat: 25.639814, checkout_lng: -100.384712 },
+    contrato: {
+      id: 1, cliente: 'X', sucursal_id: null,
+      precio_sin_iva: 2100, precio_lavamanos: 0, tiene_lavamanos: false,
+      datos_fiscales: 'REMISION', latitud: 25.639814, longitud: -100.384712,
+    },
+    modificadores: MODIFICADORES,
+    geocercas: GEOCERCAS,
+  });
+  assert.equal(d.base, 2100);
   assert.equal(d.recargo_zona, 0);
-  assert.equal(d.geocerca_nombre, 'MTY Base');
-  assert.equal(d.subtotal, 700);
-  assert.equal(d.iva, 112); // 700 * 0.16
-  assert.equal(d.total, 812);
+  assert.equal(d.es_fiscal, false);
+  assert.equal(d.documento, 'REMISION');
+  assert.equal(d.iva, 0);            // remisión no lleva IVA
+  assert.equal(d.total, 2100);
 });
 
-test('recargo de zona fijo (foránea poniente)', () => {
+test('lavamanos se suma a la base cuando tiene_lavamanos', () => {
   const d = calcularTarifaServicio({
-    servicio: { id: 's2', contrato_id: 'c1', tipo_servicio_clave: 'limpieza', cantidad_unidades: 1, lat: 25.70, lng: -100.55 },
-    contrato: { id: 'c1', cliente_id: 'cli1', plaza: 'MTY', tipo_unidad: 'estandar', descuento_porcentaje: 0 },
-    tipoServicio: TIPO_LIMPIEZA,
-    tarifa: TARIFA_350,
+    servicio: { id: 9, contrato_id: 9, tipo: 'LIMPIEZA', checkout_lat: 25.64, checkout_lng: -100.38 },
+    contrato: {
+      id: 9, cliente: 'Y', sucursal_id: 1,
+      precio_sin_iva: 3000, precio_lavamanos: 500, tiene_lavamanos: true,
+      datos_fiscales: 'FACTURA', latitud: 25.64, longitud: -100.38,
+    },
+    modificadores: MODIFICADORES,
     geocercas: GEOCERCAS,
   });
-  assert.equal(d.subtotal_base, 350);
-  assert.equal(d.recargo_zona, 250);
-  assert.equal(d.subtotal, 600);
-  assert.equal(d.total, 696); // 600 * 1.16
+  assert.equal(d.base, 3500);        // 3000 + 500
+  assert.equal(d.recargo_zona, 0);   // zona base
+  assert.equal(d.iva, 560);          // 3500 * 0.16
+  assert.equal(d.total, 4060);
 });
 
-test('recargo de zona porcentaje (foránea norte 15%)', () => {
+test('modificador de tipo de servicio (EXTRA x1.5)', () => {
   const d = calcularTarifaServicio({
-    servicio: { id: 's3', contrato_id: 'c1', tipo_servicio_clave: 'limpieza', cantidad_unidades: 1, lat: 25.88, lng: -100.31 },
-    contrato: { id: 'c1', cliente_id: 'cli1', plaza: 'MTY', tipo_unidad: 'estandar', descuento_porcentaje: 0 },
-    tipoServicio: TIPO_LIMPIEZA,
-    tarifa: TARIFA_350,
+    servicio: { id: 10, contrato_id: 1, tipo: 'EXTRA', checkout_lat: 25.64, checkout_lng: -100.38 },
+    contrato: {
+      id: 1, cliente: 'Z', sucursal_id: 1,
+      precio_sin_iva: 2000, precio_lavamanos: 0, tiene_lavamanos: false,
+      datos_fiscales: 'FACTURA', latitud: 25.64, longitud: -100.38,
+    },
+    modificadores: MODIFICADORES,
     geocercas: GEOCERCAS,
   });
-  assert.equal(d.recargo_zona, 52.5); // 350 * 15%
-  assert.equal(d.subtotal, 402.5);
-  assert.equal(d.total, r2(402.5 * 1.16)); // 466.9
+  assert.equal(d.subtotal_base, 3000); // 2000 * 1.5
+  assert.equal(d.total, r2(3000 * 1.16)); // 3480
 });
 
-test('modificador de servicio (bombeo extra x1.5) + descuento contrato 10%', () => {
+test('recargo por porcentaje', () => {
   const d = calcularTarifaServicio({
-    servicio: { id: 's4', contrato_id: 'c1', tipo_servicio_clave: 'bombeo_extra', cantidad_unidades: 1, lat: 25.67, lng: -100.31 },
-    contrato: { id: 'c1', cliente_id: 'cli1', plaza: 'MTY', tipo_unidad: 'estandar', descuento_porcentaje: 10 },
-    tipoServicio: TIPO_EXTRA,
-    tarifa: TARIFA_350,
+    servicio: { id: 11, contrato_id: 1, tipo: 'LIMPIEZA', checkout_lat: 25.88, checkout_lng: -100.12 },
+    contrato: {
+      id: 1, cliente: 'W', sucursal_id: 1,
+      precio_sin_iva: 1000, precio_lavamanos: 0, tiene_lavamanos: false,
+      datos_fiscales: 'FACTURA', latitud: 25.88, longitud: -100.12,
+    },
+    modificadores: MODIFICADORES,
     geocercas: GEOCERCAS,
   });
-  assert.equal(d.precio_unitario_aplicado, 525); // 350 * 1.5
-  assert.equal(d.subtotal_base, 525);
-  assert.equal(d.recargo_zona, 0); // zona base
-  assert.equal(d.descuento, 52.5); // 525 * 10%
-  assert.equal(d.base_gravable, 472.5);
-  assert.equal(d.iva, 75.6); // 472.5 * 0.16
-  assert.equal(d.total, 548.1);
+  assert.equal(d.geocerca_id, 3);
+  assert.equal(d.recargo_zona, 150); // 1000 * 15%
+  assert.equal(d.subtotal, 1150);
+  assert.equal(d.total, 1334);       // 1150 * 1.16
 });
 
-test('recargo fijo + descuento juntos', () => {
+test('tipo no facturable -> total 0', () => {
   const d = calcularTarifaServicio({
-    servicio: { id: 's5', contrato_id: 'c1', tipo_servicio_clave: 'limpieza', cantidad_unidades: 1, lat: 25.70, lng: -100.55 },
-    contrato: { id: 'c1', cliente_id: 'cli1', plaza: 'MTY', tipo_unidad: 'estandar', descuento_porcentaje: 10 },
-    tipoServicio: TIPO_LIMPIEZA,
-    tarifa: TARIFA_350,
-    geocercas: GEOCERCAS,
-  });
-  // subtotal_base 350 + recargo 250 = 600; desc 10% = 60; base 540; iva 86.4; total 626.4
-  assert.equal(d.subtotal, 600);
-  assert.equal(d.descuento, 60);
-  assert.equal(d.base_gravable, 540);
-  assert.equal(d.total, 626.4);
-});
-
-test('servicio no facturable devuelve total 0', () => {
-  const d = calcularTarifaServicio({
-    servicio: { id: 's6', contrato_id: 'c1', tipo_servicio_clave: 'inspeccion', cantidad_unidades: 1, lat: 25.67, lng: -100.31 },
-    contrato: { id: 'c1', cliente_id: 'cli1', plaza: 'MTY', tipo_unidad: 'estandar', descuento_porcentaje: 0 },
-    tipoServicio: TIPO_INSPECCION,
-    tarifa: TARIFA_350,
+    servicio: { id: 12, contrato_id: 1, tipo: 'INSPECCION', checkout_lat: 25.64, checkout_lng: -100.38 },
+    contrato: {
+      id: 1, cliente: 'Q', sucursal_id: 1,
+      precio_sin_iva: 2000, tiene_lavamanos: false, datos_fiscales: 'FACTURA',
+      latitud: 25.64, longitud: -100.38,
+    },
+    modificadores: MODIFICADORES,
     geocercas: GEOCERCAS,
   });
   assert.equal(d.facturable, false);
   assert.equal(d.total, 0);
 });
 
-test('servicio sin coordenada: sin recargo de zona', () => {
+test('sin coordenada de checkout usa la del contrato', () => {
   const d = calcularTarifaServicio({
-    servicio: { id: 's7', contrato_id: 'c1', tipo_servicio_clave: 'limpieza', cantidad_unidades: 1, lat: null, lng: null },
-    contrato: { id: 'c1', cliente_id: 'cli1', plaza: 'MTY', tipo_unidad: 'estandar', descuento_porcentaje: 0 },
-    tipoServicio: TIPO_LIMPIEZA,
-    tarifa: TARIFA_350,
+    servicio: { id: 13, contrato_id: 8, tipo: 'LIMPIEZA', checkout_lat: null, checkout_lng: null },
+    contrato: {
+      id: 8, cliente: 'R', sucursal_id: 1,
+      precio_sin_iva: 3000, tiene_lavamanos: false, datos_fiscales: 'FACTURA',
+      latitud: 25.705905, longitud: -100.525547, // foránea
+    },
+    modificadores: MODIFICADORES,
     geocercas: GEOCERCAS,
   });
-  assert.equal(d.recargo_zona, 0);
-  assert.equal(d.geocerca_id, null);
-  assert.equal(d.total, 406); // 350 * 1.16
-});
-
-test('sin tarifa vigente lanza error', () => {
-  assert.throws(() =>
-    calcularTarifaServicio({
-      servicio: { id: 's8', contrato_id: 'c1', tipo_servicio_clave: 'limpieza', cantidad_unidades: 1, lat: 25.67, lng: -100.31 },
-      contrato: { id: 'c1', cliente_id: 'cli1', plaza: 'MTY', tipo_unidad: 'estandar', descuento_porcentaje: 0 },
-      tipoServicio: TIPO_LIMPIEZA,
-      tarifa: null,
-      geocercas: GEOCERCAS,
-    })
-  );
+  assert.equal(d.geocerca_id, 2);    // resolvió con la coord del contrato
+  assert.equal(d.recargo_zona, 250);
 });

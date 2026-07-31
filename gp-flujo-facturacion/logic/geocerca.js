@@ -36,19 +36,21 @@ function puntoEnPoligono(punto, poligono) {
 
 /**
  * Resuelve la geocerca activa de mayor prioridad (menor `prioridad`) que
- * contiene el punto dentro de la plaza dada.
+ * contiene el punto. Si `sucursalId` viene dado, solo considera geocercas de
+ * esa sucursal o de sucursal `null` (comodín) — igual que la función SQL.
  *
  * @param {number} lat
  * @param {number} lng
- * @param {string} plaza  'MTY' | 'QRO'
- * @param {Array<Object>} geocercas  cada una: {id, nombre, plaza, poligono:[[lng,lat],...],
- *                                    recargo_tipo, recargo_valor, prioridad, activa}
+ * @param {number|null} sucursalId
+ * @param {Array<Object>} geocercas  cada una: {id, nombre, sucursal_id,
+ *        poligono:[[lng,lat],...], recargo_tipo, recargo_valor, prioridad, activa}
  * @returns {Object|null}
  */
-function resolverGeocerca(lat, lng, plaza, geocercas) {
+function resolverGeocerca(lat, lng, sucursalId, geocercas) {
   if (lat == null || lng == null) return null;
   const candidatas = geocercas
-    .filter((g) => g.activa !== false && g.plaza === plaza)
+    .filter((g) => g.activa !== false)
+    .filter((g) => sucursalId == null || g.sucursal_id == null || g.sucursal_id === sucursalId)
     .filter((g) => puntoEnPoligono([lng, lat], g.poligono))
     .sort((a, b) => (a.prioridad ?? 100) - (b.prioridad ?? 100));
   return candidatas[0] || null;

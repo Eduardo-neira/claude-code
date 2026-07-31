@@ -4,62 +4,78 @@
  * Cálculo de tarifa por servicio · Grupo Portátil
  * -----------------------------------------------------------------------------
  * Implementación de referencia (espejo de la función SQL
- * `calcular_tarifa_servicio`). Sirve para:
- *   - pruebas unitarias sin base de datos,
- *   - un Code node de n8n cuando se prefiere calcular fuera de Postgres,
- *   - validar que la lógica SQL y la de aplicación no diverjan.
+ * `calcular_tarifa_servicio`) adaptada al schema REAL de gp-inventario.
+ *
+ * Fuente de datos (tablas reales):
+ *   contratos: precio_sin_iva, precio_lavamanos, tiene_lavamanos,
+ *              datos_fiscales ('FACTURA' | 'REMISION'), sucursal_id,
+ *              latitud, longitud, cliente
+ *   servicios: tipo, checkout_lat, checkout_lng
  *
  * Fórmula:
- *   precio_unitario_aplicado = precio_unitario_base * modificador_servicio
- *   subtotal_base            = precio_unitario_aplicado * cantidad_unidades
- *   recargo_zona             = fijo | subtotal_base * pct/100 | 0
- *   subtotal                 = subtotal_base + recargo_zona
- *   descuento                = subtotal * descuento_contrato/100
- *   base_gravable            = subtotal - descuento
- *   iva                      = base_gravable * 0.16
- *   total                    = base_gravable + iva
+ *   base          = precio_sin_iva + (tiene_lavamanos ? precio_lavamanos : 0)
+ *   subtotal_base = base * modificador_servicio
+ *   recargo_zona  = geocerca fijo ($) | subtotal_base * pct/100 | 0
+ *   subtotal      = subtotal_base + recargo_zona
+ *   es_fiscal     = datos_fiscales contiene 'FACTURA'
+ *   iva           = es_fiscal ? subtotal * 0.16 : 0     (REMISION no lleva IVA)
+ *   total         = subtotal + iva
+ *
+ * Coordenada usada: la del checkout del servicio; si falta, la del contrato.
  */
 
 const { resolverGeocerca } = require('./geocerca');
 
 const IVA_TASA = 0.16;
 
-/** Redondeo a 2 decimales estable (evita 350.00000000000006). */
+/** Redondeo a 2 decimales estable. */
 function r2(n) {
   return Math.round((n + Number.EPSILON) * 100) / 100;
 }
 
+/** ¿El contrato se factura (CFDI) o es remisión (sin IVA)? */
+function esFiscal(datosFiscales) {
+  return String(datosFiscales || '').toUpperCase().includes('FACTURA');
+}
+
 /**
  * @param {Object} args
- * @param {Object} args.servicio  {id, contrato_id, tipo_servicio_clave, cantidad_unidades, lat, lng}
- * @param {Object} args.contrato  {id, cliente_id, plaza, tipo_unidad, descuento_porcentaje}
- * @param {Object} args.tipoServicio  {clave, modificador, facturable, clave_prod_serv_sat, clave_unidad_sat}
- * @param {Object} args.tarifa    {precio_unitario}  tarifa base vigente
- * @param {Array}  [args.geocercas]  catálogo de geocercas para resolver recargo
+ * @param {Object} args.servicio  {id, contrato_id, tipo, checkout_lat, checkout_lng}
+ * @param {Object} args.contrato  {id, cliente, sucursal_id, precio_sin_iva,
+ *                                  precio_lavamanos, tiene_lavamanos,
+ *                                  datos_fiscales, latitud, longitud}
+ * @param {Object} [args.modificadores]  mapa { TIPO: {modificador, facturable} }
+ * @param {Array}  [args.geocercas]      catálogo de geocercas
  * @returns {Object} desglose (misma forma que el JSONB de la función SQL)
  */
-function calcularTarifaServicio({ servicio, contrato, tipoServicio, tarifa, geocercas = [] }) {
-  if (!tipoServicio) throw new Error('tipoServicio requerido');
-  if (!tipoServicio.facturable) {
-    return { facturable: false, motivo: 'tipo de servicio no facturable', total: 0 };
+function calcularTarifaServicio({ servicio, contrato, modificadores = {}, geocercas = [] }) {
+  const tipo = String(servicio.tipo || 'LIMPIEZA').toUpperCase();
+  const mod = modificadores[tipo];
+
+  if (mod && mod.facturable === false) {
+    return {
+      facturable: false,
+      motivo: 'tipo de servicio no facturable',
+      servicio_id: servicio.id,
+      total: 0,
+    };
   }
-  if (!tarifa || tarifa.precio_unitario == null) {
-    throw new Error(
-      `Sin tarifa vigente para plaza=${contrato.plaza} unidad=${contrato.tipo_unidad} servicio=${servicio.tipo_servicio_clave}`
-    );
-  }
 
-  const cantidad = servicio.cantidad_unidades ?? 1;
-  const modificador = tipoServicio.modificador ?? 1;
+  const modificador = mod ? mod.modificador : 1.0;
 
-  const precioUnitarioAplicado = r2(tarifa.precio_unitario * modificador);
-  const subtotalBase = r2(precioUnitarioAplicado * cantidad);
+  // Base desde el contrato.
+  const lavamanos = contrato.tiene_lavamanos ? Number(contrato.precio_lavamanos || 0) : 0;
+  const base = r2(Number(contrato.precio_sin_iva || 0) + lavamanos);
+  const subtotalBase = r2(base * modificador);
 
-  // Recargo por geocerca
+  // Recargo por geocerca (coordenada del checkout, o del contrato).
+  const lat = servicio.checkout_lat != null ? servicio.checkout_lat : contrato.latitud;
+  const lng = servicio.checkout_lng != null ? servicio.checkout_lng : contrato.longitud;
+
   let recargoZona = 0;
   let geo = null;
-  if (servicio.lat != null && servicio.lng != null) {
-    geo = resolverGeocerca(servicio.lat, servicio.lng, contrato.plaza, geocercas);
+  if (lat != null && lng != null) {
+    geo = resolverGeocerca(Number(lat), Number(lng), contrato.sucursal_id, geocercas);
     if (geo) {
       if (geo.recargo_tipo === 'fijo') {
         recargoZona = r2(geo.recargo_valor);
@@ -70,42 +86,35 @@ function calcularTarifaServicio({ servicio, contrato, tipoServicio, tarifa, geoc
   }
 
   const subtotal = r2(subtotalBase + recargoZona);
-
-  // Descuento del contrato
-  const descPct = contrato.descuento_porcentaje ?? 0;
-  const descuento = descPct > 0 ? r2((subtotal * descPct) / 100) : 0;
-
-  const baseGravable = r2(subtotal - descuento);
-  const iva = r2(baseGravable * IVA_TASA);
-  const total = r2(baseGravable + iva);
+  const fiscal = esFiscal(contrato.datos_fiscales);
+  const iva = fiscal ? r2(subtotal * IVA_TASA) : 0;
+  const total = r2(subtotal + iva);
 
   return {
     facturable: true,
+    es_fiscal: fiscal,
+    documento: fiscal ? 'CFDI' : 'REMISION',
     servicio_id: servicio.id,
     contrato_id: contrato.id,
-    cliente_id: contrato.cliente_id,
-    plaza: contrato.plaza,
-    tipo_unidad: contrato.tipo_unidad,
-    tipo_servicio: servicio.tipo_servicio_clave,
-    cantidad_unidades: cantidad,
-    precio_unitario_base: tarifa.precio_unitario,
+    cliente: contrato.cliente,
+    sucursal_id: contrato.sucursal_id ?? null,
+    tipo_servicio: tipo,
+    precio_base_contrato: contrato.precio_sin_iva,
+    precio_lavamanos: lavamanos,
+    base,
     modificador_servicio: modificador,
-    precio_unitario_aplicado: precioUnitarioAplicado,
     subtotal_base: subtotalBase,
     geocerca_id: geo ? geo.id : null,
     geocerca_nombre: geo ? geo.nombre : null,
     recargo_zona: recargoZona,
     subtotal,
-    descuento_porcentaje: descPct,
-    descuento,
-    base_gravable: baseGravable,
-    iva_tasa: IVA_TASA,
+    iva_tasa: fiscal ? IVA_TASA : 0,
     iva,
     total,
-    clave_prod_serv_sat: tipoServicio.clave_prod_serv_sat,
-    clave_unidad_sat: tipoServicio.clave_unidad_sat,
+    lat: lat != null ? Number(lat) : null,
+    lng: lng != null ? Number(lng) : null,
     moneda: 'MXN',
   };
 }
 
-module.exports = { calcularTarifaServicio, r2, IVA_TASA };
+module.exports = { calcularTarifaServicio, esFiscal, r2, IVA_TASA };

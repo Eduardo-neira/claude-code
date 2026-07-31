@@ -1,15 +1,20 @@
 # Flujo automatizado de facturación post-servicio · Grupo Portátil
 
+> **Estado:** migración `0001` **aplicada y validada** contra el proyecto Supabase
+> `gp-inventario` (schema real), con casos reales de contrato FACTURA y REMISION.
+> Pendiente: datos fiscales del receptor y decisión del modelo de facturación
+> (ver "Pendientes").
+
 ## OBJETIVO OPERATIVO
 
-Emitir automáticamente una factura CFDI personalizada **después de cada
-servicio completado**, calculando la tarifa según **ubicación (geocerca)** y
-**tipo de servicio**, sin intervención manual de captura.
+Emitir automáticamente el comprobante correcto **después de cada servicio
+completado**, calculando la tarifa según **ubicación (geocerca)** y **tipo de
+servicio**, y respetando si el contrato es fiscal (**CFDI**) o no (**REMISION**).
 
 **Indicadores que mejora:**
-- Tiempo de emisión de factura: de horas/días → minutos tras cerrar el servicio.
-- Fugas de cobro por recargos de zona no aplicados → 0 (el recargo se calcula solo).
-- Errores de tarifa por captura manual → eliminados (fuente única de verdad en SQL).
+- Tiempo de emisión: de horas/días → minutos tras cerrar el servicio.
+- Fugas de cobro por recargos de zona no aplicados → 0 (recargo automático).
+- Errores de tarifa por captura manual → eliminados (fuente única en SQL).
 - Trazabilidad: cada factura queda ligada a su servicio, contrato, geocerca y desglose.
 
 ---
@@ -18,39 +23,39 @@ servicio completado**, calculando la tarifa según **ubicación (geocerca)** y
 
 | # | Paso | Responsable | Herramienta |
 |---|------|-------------|-------------|
-| 1 | Operador cierra el servicio en campo (fotos, firma, coordenada GPS) | Alberto / Emmanuel / Meñito / Juan Pablo | AppSheet |
-| 2 | AppSheet escribe el servicio en Supabase con `estado='completado'` y `lat/lng` | Sistema | AppSheet → Supabase |
-| 3 | Cada 10 min se detectan servicios completados, con pago confirmado, sin facturar | Sistema | n8n (`servicios_por_facturar`) |
-| 4 | Se resuelve la geocerca del punto y se calcula la tarifa (base + recargo zona − descuento + IVA) | Sistema | Supabase `calcular_tarifa_servicio()` (PostGIS) |
-| 5 | Se arma y timbra el CFDI 4.0 | Sistema | n8n → Facturama API |
-| 6 | Se registra la factura y se marca el servicio como `facturado` | Sistema | Supabase (`facturas`, `servicios`) |
-| 7 | Se envía la factura al cliente por WhatsApp | Sistema | n8n → Troncalnet |
-| 8 | Si el timbrado falla, se registra el error y se alerta a Eduardo | Sistema | n8n → Troncalnet |
+| 1 | Operador cierra el servicio en campo (foto, checkout con GPS) | Alberto / Emmanuel / Meñito / Juan Pablo | AppSheet |
+| 2 | AppSheet escribe el servicio con `completado=true` y `checkout_lat/lng` | Sistema | AppSheet → Supabase |
+| 3 | Cada 10 min se detectan servicios completados, con cobro confirmado, sin factura | Sistema | n8n (`servicios_por_facturar`) |
+| 4 | Se resuelve la geocerca y se calcula la tarifa | Sistema | Supabase `calcular_tarifa_servicio()` (PostGIS) |
+| 5a | Si el contrato es **FACTURA** → se timbra CFDI 4.0 | Sistema | n8n → Facturama |
+| 5b | Si es **REMISION** → se registra comprobante no fiscal (sin IVA) | Sistema | n8n → Supabase |
+| 6 | Se registra la factura, ligada al servicio (`facturas.servicio_id`) | Sistema | Supabase |
+| 7 | Se avisa al cliente | Sistema | n8n → Troncalnet/WhatsApp |
+| 8 | Si el timbrado falla, se alerta a Eduardo | Sistema | n8n → Troncalnet |
 
 ### Regla de cobro anticipado
-El flujo **solo factura servicios de contratos con `pago_confirmado = true` y
-`estado = 'activo'`** (filtrado en la vista `servicios_por_facturar`). Un
-servicio de un contrato sin pago no genera factura automática — se queda
-pendiente y visible para revisión.
+La vista `servicios_por_facturar` solo incluye servicios cuyo contrato tiene un
+`cobro` en estado `pagado`. Sin cobro confirmado, el servicio no se factura
+automáticamente.
 
 ### Modelo de tarifa (fuente única: `calcular_tarifa_servicio`)
 
 ```
-precio_unitario_aplicado = tarifa_base(plaza, tipo_unidad, tipo_servicio) × modificador_servicio
-subtotal_base            = precio_unitario_aplicado × cantidad_unidades
-recargo_zona             = geocerca fijo ($) | geocerca % sobre subtotal_base | 0
-subtotal                 = subtotal_base + recargo_zona
-descuento                = subtotal × descuento_contrato%
-base_gravable            = subtotal − descuento
-IVA                      = base_gravable × 16%
-TOTAL                    = base_gravable + IVA
+base          = contratos.precio_sin_iva + (tiene_lavamanos ? precio_lavamanos : 0)
+subtotal_base = base × modificador_servicio        (tipos_servicio_modificador)
+recargo_zona  = geocerca fijo ($) | subtotal_base × pct/100 | 0
+subtotal      = subtotal_base + recargo_zona
+es_fiscal     = contratos.datos_fiscales contiene 'FACTURA'
+IVA           = es_fiscal ? subtotal × 16% : 0     (REMISION no lleva IVA)
+TOTAL         = subtotal + IVA
 ```
 
-- **Geocerca** = polígono (coordenadas Google Maps, PostGIS SRID 4326). El punto
-  del servicio se ubica con `ST_Contains`. Si dos zonas se traslapan gana la de
-  menor `prioridad`.
-- **Tipo de servicio** aplica un modificador (ej. `bombeo_extra` = ×1.5,
-  `inspeccion` = no facturable).
+- **Coordenada:** `servicios.checkout_lat/lng`; si falta, `contratos.latitud/longitud`.
+- **Geocerca:** polígono PostGIS (SRID 4326), resuelto con `ST_Contains`; en
+  traslape gana la de menor `prioridad`.
+- **Casos validados contra la DB real:**
+  - Contrato 8 (PROMI-MEX, FACTURA, zona foránea): base 3000 + recargo 250 + IVA 520 = **3770** (CFDI).
+  - Contrato 1 (REMISION, zona base): base 2100 + recargo 0 + IVA 0 = **2100** (REMISION).
 
 ---
 
@@ -58,15 +63,13 @@ TOTAL                    = base_gravable + IVA
 
 | Componente | Dónde | Archivo |
 |---|---|---|
-| Schema + funciones (geocercas, tarifas, servicios, facturas) | Supabase (PostGIS) | `supabase/migrations/0001_facturacion_geocercas.sql` |
-| Datos de ejemplo (zonas, tarifas) | Supabase | `supabase/seed_ejemplo.sql` |
+| Geocercas, modificadores, funciones, vista, columnas en `facturas` | Supabase `gp-inventario` (PostGIS) — **aplicado** | `supabase/migrations/0001_facturacion_geocercas.sql` |
+| Geocercas de ejemplo (MTY) | Supabase | `supabase/seed_ejemplo.sql` |
 | Lógica de tarifa (referencia + tests) | Repo / n8n Code node | `logic/calcular-tarifa.js`, `logic/geocerca.js` |
 | Orquestación | n8n | `n8n/workflow-facturacion-post-servicio.json` |
-| Timbrado CFDI | Facturama API | (dentro del workflow) |
+| Timbrado CFDI | Facturama | (dentro del workflow) |
 | Aviso a cliente | Troncalnet / WhatsApp | (dentro del workflow) |
-| Captura en campo | AppSheet | (existente — solo agregar coordenada GPS al cierre) |
-
-**Pasos de despliegue:** ver `README.md`.
+| Captura en campo | AppSheet | (existente — asegurar checkout con GPS) |
 
 ---
 
@@ -74,33 +77,37 @@ TOTAL                    = base_gravable + IVA
 
 | Riesgo | Mitigación |
 |---|---|
-| Servicio sin coordenada GPS | El cálculo procede sin recargo de zona (no bloquea). Hacer obligatorio el GPS en el cierre de AppSheet. |
-| Geocercas mal trazadas → recargo equivocado | Seed marcado como ejemplo; validar polígonos reales con el equipo de cada plaza antes de activar. |
-| Doble facturación | Índice único parcial en `servicios.factura_id` + la vista excluye ya facturados. |
-| Datos fiscales del cliente incompletos (RFC, régimen, CP) | El timbrado falla → se registra `estado_cfdi='error'` y alerta a Eduardo; no rompe el lote. |
-| Falla de Facturama | Salida de error del nodo → registro + alerta; el servicio queda pendiente para reintento en el siguiente ciclo. |
-| Cliente sin pago pero con servicio realizado | La vista lo excluye; se factura manual tras confirmar pago. |
+| Servicio sin coordenada | Usa la del contrato como fallback; hacer el GPS obligatorio en AppSheet. |
+| Geocercas mal trazadas | Seed marcado como ejemplo; validar polígonos reales por plaza antes de activar. |
+| Doble facturación | Índice único `uq_facturas_servicio` sobre `facturas.servicio_id`. |
+| **Sin datos fiscales del receptor** | `contratos.datos_fiscales` solo trae el flag FACTURA/REMISION; **falta capturar RFC/régimen/uso/CP** para timbrar CFDI reales. Bloqueante para la rama fiscal. |
+| Falla de Facturama | Salida de error → alerta a Eduardo; el servicio queda pendiente para reintento. |
+| Contrato sin cobro pagado | La vista lo excluye; se factura tras confirmar el cobro. |
 
 ---
 
 ## MÉTRICAS DE ÉXITO
 
 - **% de servicios facturados automáticamente** (meta > 95%).
-- **Tiempo medio cierre-de-servicio → CFDI timbrado** (meta < 15 min).
-- **Facturas en `estado_cfdi='error'`** por semana (meta → 0, tendencia a la baja).
-- **Recargos de zona aplicados / servicios foráneos** (validar que no haya fugas).
-- **Diferencia entre tarifa esperada y facturada** (meta = 0; los tests protegen la fórmula).
+- **Tiempo cierre-de-servicio → comprobante** (meta < 15 min).
+- **Facturas en error de timbrado** por semana (meta → 0).
+- **Recargos de zona aplicados / servicios foráneos** (sin fugas).
+- **Diferencia tarifa esperada vs emitida** (meta = 0; protegido por tests).
 
 ---
 
-## SIGUIENTE ACCIÓN (Eduardo)
+## PENDIENTES (decisión de Eduardo)
 
-1. Aplicar `0001_facturacion_geocercas.sql` en Supabase (staging primero).
-2. Reemplazar el seed de ejemplo por **tarifas reales** y **polígonos reales** de
-   las zonas de MTY y QRO (coordinar García/Santa Catarina con MTY y El Marqués
-   con Juan Pablo en QRO).
-3. Completar datos fiscales (`regimen_fiscal`, `uso_cfdi`, `codigo_postal_fiscal`)
-   de los clientes activos.
-4. Importar el workflow en n8n, conectar credenciales (Supabase, Facturama,
-   Troncalnet) y probar con **1 servicio real** antes de activar el schedule.
-5. Agregar el campo de **coordenada GPS obligatoria** al cierre de servicio en AppSheet.
+1. **Datos fiscales del receptor.** Definir dónde se capturan (RFC, régimen, uso
+   CFDI, CP) — hoy no existen estructurados. Sin esto no se pueden timbrar CFDI reales.
+2. **Modelo de facturación.** ¿Por servicio (este flujo) o mensual por `cobro`?
+   Los 337 cobros mensuales sugieren que hoy se factura por periodo.
+3. **Polígonos y recargos reales** por zona (reemplazar el seed de ejemplo).
+4. Importar el workflow en n8n, conectar credenciales y **probar con 1 servicio real**.
+
+---
+
+## SIGUIENTE ACCIÓN
+
+- Confirmar el modelo de facturación (por servicio vs mensual) y la fuente de los
+  datos fiscales. Con eso, ajustar la rama CFDI del workflow y activar.
