@@ -1,0 +1,9 @@
+# Dependencias mínimas para ejecutar el sistema (backends CSV + SMTP/consola).
+Jinja2>=3.1
+PyYAML>=6.0
+
+# Opcionales — descoméntalas según el backend que uses:
+# openpyxl>=3.1         # backend de Excel (.xlsx), p.ej. exportaciones de Facturama
+# gspread>=6.0          # backend de Google Sheets
+# google-auth>=2.0      # autenticación de Google Sheets
+# python-dotenv>=1.0    # carga automática de .env

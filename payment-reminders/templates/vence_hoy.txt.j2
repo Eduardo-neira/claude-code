@@ -1,0 +1,19 @@
+Estimado(a) {{ invoice.client_name }}:
+
+Le recordamos que su factura {{ invoice.invoice_id }} por {{ amount_display }}
+vence HOY, {{ due_date_display }}.
+
+Para evitar recargos o suspensión del servicio, le agradeceremos realizar su
+pago el día de hoy.
+{% if invoice.payment_link %}
+Pague en línea: {{ invoice.payment_link }}
+{% endif %}{% if company.payment_instructions %}
+{{ company.payment_instructions }}
+{% endif %}
+Si ya efectuó el pago, por favor haga caso omiso de este correo o envíenos su
+comprobante.
+
+Gracias por su preferencia.
+
+{{ company.signature or company.name }}
+{% if company.phone %}Tel: {{ company.phone }}{% endif %}

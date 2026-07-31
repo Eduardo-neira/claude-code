@@ -1,0 +1,20 @@
+Estimado(a) {{ invoice.client_name }}:
+
+Nuestros registros indican que la factura {{ invoice.invoice_id }} por
+{{ amount_display }}, con vencimiento el {{ due_date_display }}, presenta
+{{ days_overdue }} día(s) de atraso.
+
+Le agradeceremos regularizar su pago a la brevedad para mantener su cuenta al
+corriente.
+{% if invoice.payment_link %}
+Pague en línea: {{ invoice.payment_link }}
+{% endif %}{% if company.payment_instructions %}
+{{ company.payment_instructions }}
+{% endif %}
+Si ya realizó el pago en los últimos días, por favor envíenos su comprobante
+para actualizar nuestros registros y omita este recordatorio.
+
+Estamos para servirle.
+
+{{ company.signature or company.name }}
+{% if company.phone %}Tel: {{ company.phone }}{% endif %}
