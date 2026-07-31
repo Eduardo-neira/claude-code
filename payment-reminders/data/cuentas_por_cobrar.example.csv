@@ -1,0 +1,10 @@
+factura,cliente,correo,monto,moneda,fecha_emision,fecha_vencimiento,estatus,ultimo_recordatorio,fecha_ultimo_recordatorio,enlace_pago,notas
+A-101,Constructora del Norte SA,pagos@constructoranorte.mx,12500.00,MXN,2026-07-15,2026-08-02,pendiente,,,https://pago.gportatil.com/A-101,Renta de sanitarios obra Apodaca
+A-102,Eventos Monterrey SC,cuentas@eventosmty.com,4800.00,MXN,2026-07-16,2026-07-31,pendiente,,,https://pago.gportatil.com/A-102,Evento fin de semana
+A-103,Grupo Vallarta SA,tesoreria@grupovallarta.mx,9200.50,MXN,2026-07-01,2026-07-28,pendiente,,,https://pago.gportatil.com/A-103,
+A-104,Obras QRO SA,pagos@obrasqro.mx,31000.00,MXN,2026-06-20,2026-07-10,vencida,vencido_reciente,2026-07-15,https://pago.gportatil.com/A-104,Contrato trimestral
+A-105,Rentas del Bajio SC,admin@rentasbajio.com,15750.00,MXN,2026-05-10,2026-06-01,vencida,vencido,2026-07-05,https://pago.gportatil.com/A-105,Cliente moroso recurrente
+A-106,Servicios Integrales SA,,7300.00,MXN,2026-07-05,2026-07-20,pendiente,,,,Falta correo de contacto
+A-107,Corporativo Lindavista,finanzas@lindavista.mx,5400.00,MXN,2026-07-20,2026-09-30,pendiente,,,https://pago.gportatil.com/A-107,Aún no vence
+A-108,Distribuidora Poniente SA,pagos@dponiente.mx,8900.00,MXN,2026-06-01,2026-06-25,pagada,,,https://pago.gportatil.com/A-108,Ya liquidada
+A-109,Comercial del Valle,compras@comercialvalle.mx,2200.00,MXN,2026-07-10,2026-07-10,vencida,,,https://pago.gportatil.com/A-109,Vencida 21 dias sin recordatorio

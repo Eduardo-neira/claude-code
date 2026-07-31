@@ -1,0 +1,97 @@
+# Configuración del sistema de recordatorios de cuentas por cobrar.
+# Copia este archivo a config.yaml y ajústalo. Los secretos NO se escriben aquí:
+# usa ${VARIABLE} para leerlos del entorno o del archivo .env (ver .env.example).
+
+# Datos de la empresa (se inyectan en las plantillas de correo).
+company:
+  name: "Grupo Portátil"
+  signature: "Equipo de Cobranza · Grupo Portátil"
+  phone: "+52 81 0000 0000"
+  collections_email: "cobranza@gportatil.com"
+  payment_instructions: >
+    Puede pagar por transferencia a la CLABE 000000000000000000 (Banco XYZ)
+    a nombre de Grupo Portátil, indicando el número de factura como referencia.
+
+# Identidad del remitente de los correos.
+sender:
+  name: "Grupo Portátil - Cobranza"
+  email: "${SMTP_USERNAME}"
+  reply_to: "cobranza@gportatil.com"
+  # Copia oculta opcional (recibe una copia de cada recordatorio enviado).
+  bcc:
+    - "cobranza@gportatil.com"
+
+# Fuente de datos de las facturas.
+# kind: csv | google_sheets
+spreadsheet:
+  kind: csv
+  options:
+    path: "data/cuentas_por_cobrar.example.csv"
+  # Ejemplo para Google Sheets:
+  # kind: google_sheets
+  # options:
+  #   spreadsheet_id: "${SHEETS_SPREADSHEET_ID}"
+  #   worksheet: "Cuentas por cobrar"
+  #   credentials_file: "service_account.json"   # o usa GOOGLE_APPLICATION_CREDENTIALS
+
+# Envío de correo.
+# kind: console (simulación/pruebas) | smtp (producción, compatible con Gmail)
+mailer:
+  kind: console
+  # Ejemplo para SMTP/Gmail:
+  # kind: smtp
+  # options:
+  #   host: "smtp.gmail.com"
+  #   port: 587
+  #   use_tls: true
+  #   username: "${SMTP_USERNAME}"
+  #   password: "${SMTP_PASSWORD}"   # contraseña de aplicación de Gmail
+
+# Mapeo de columnas de la hoja (encabezados). Ajusta a tus nombres reales.
+columns:
+  invoice_id: "factura"
+  client_name: "cliente"
+  client_email: "correo"
+  amount: "monto"
+  currency: "moneda"
+  issue_date: "fecha_emision"
+  due_date: "fecha_vencimiento"
+  status: "estatus"
+  last_reminder_stage: "ultimo_recordatorio"
+  last_reminder_date: "fecha_ultimo_recordatorio"
+  payment_link: "enlace_pago"
+  notes: "notas"
+
+# Estatus que se consideran "abiertos" (aún por cobrar).
+open_statuses: ["pendiente", "vencida", "parcial", "por cobrar"]
+# Estatus con el que se marca una factura ya vencida al enviar el recordatorio.
+overdue_status: "vencida"
+
+# Etapas de escalamiento. Los rangos son días relativos al vencimiento
+# (negativo = antes de vencer, 0 = vence hoy, positivo = días de mora).
+stages:
+  - name: proximo_vencimiento
+    days_from: -3
+    days_to: -1
+    subject: "Recordatorio: tu factura {{ invoice.invoice_id }} vence pronto"
+    template: proximo_vencimiento
+  - name: vence_hoy
+    days_from: 0
+    days_to: 0
+    subject: "Tu factura {{ invoice.invoice_id }} vence hoy"
+    template: vence_hoy
+  - name: vencido_reciente
+    days_from: 1
+    days_to: 7
+    subject: "Factura {{ invoice.invoice_id }} vencida — {{ days_overdue }} día(s)"
+    template: vencido_reciente
+  - name: vencido
+    days_from: 8
+    days_to: 30
+    subject: "Segundo aviso: factura {{ invoice.invoice_id }} con {{ days_overdue }} días de mora"
+    template: vencido
+  - name: aviso_final
+    days_from: 31
+    days_to: null   # sin límite superior
+    subject: "AVISO FINAL: factura {{ invoice.invoice_id }} vencida hace {{ days_overdue }} días"
+    template: aviso_final

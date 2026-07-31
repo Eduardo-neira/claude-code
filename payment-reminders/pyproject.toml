@@ -1,0 +1,33 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "payment-reminders"
+version = "1.0.0"
+description = "Recordatorios automatizados de cuentas por cobrar (correo + hoja de cálculo)"
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = [
+    "Jinja2>=3.1",
+    "PyYAML>=6.0",
+]
+
+[project.optional-dependencies]
+google = [
+    "gspread>=6.0",
+    "google-auth>=2.0",
+]
+dotenv = ["python-dotenv>=1.0"]
+dev = ["pytest>=7.0"]
+
+[project.scripts]
+payment-reminders = "payment_reminders.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

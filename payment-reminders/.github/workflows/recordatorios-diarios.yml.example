@@ -1,0 +1,46 @@
+# Ejemplo de flujo programado para enviar recordatorios a diario.
+#
+# Cómo activarlo:
+#   1) Renombra este archivo a "recordatorios-diarios.yml".
+#   2) Configura los secretos del repositorio (Settings → Secrets and variables
+#      → Actions): SMTP_USERNAME, SMTP_PASSWORD y, si usas Google Sheets,
+#      SHEETS_SPREADSHEET_ID y GOOGLE_CREDENTIALS_JSON.
+#   3) Ajusta la hora del cron (está en UTC).
+#
+# Nota: para que la actualización de estatus persista entre corridas necesitas
+# un backend con estado compartido (Google Sheets). Un CSV del repositorio
+# requeriría además hacer commit del archivo actualizado tras cada corrida.
+
+name: Recordatorios de cuentas por cobrar
+
+on:
+  schedule:
+    - cron: "0 15 * * 1-5"   # Lun-Vie 15:00 UTC (~9:00 CDMX)
+  workflow_dispatch: {}       # permite ejecutarlo manualmente
+
+jobs:
+  enviar-recordatorios:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: payment-reminders
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Instalar dependencias
+        run: pip install -r requirements.txt gspread google-auth
+
+      - name: Escribir credenciales de Google (si aplica)
+        if: ${{ secrets.GOOGLE_CREDENTIALS_JSON != '' }}
+        run: echo '${{ secrets.GOOGLE_CREDENTIALS_JSON }}' > service_account.json
+
+      - name: Enviar recordatorios
+        env:
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SHEETS_SPREADSHEET_ID: ${{ secrets.SHEETS_SPREADSHEET_ID }}
+        run: python -m payment_reminders --config config.yaml --send

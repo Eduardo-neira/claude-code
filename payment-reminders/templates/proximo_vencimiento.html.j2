@@ -1,0 +1,7 @@
+{% extends "_email_base.html.j2" %}
+{% set accent = "#1f6feb" %}
+{% block heading %}Su factura vence pronto{% endblock %}
+{% block intro %}
+  <p style="margin:0 0 12px;">Le recordamos amablemente que la siguiente factura vence
+  el <strong>{{ due_date_display }}</strong> (en {{ days_until_due }} día(s)).</p>
+{% endblock %}

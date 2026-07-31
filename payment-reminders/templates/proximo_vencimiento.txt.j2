@@ -1,0 +1,17 @@
+Estimado(a) {{ invoice.client_name }}:
+
+Le escribimos de {{ company.name }} para recordarle amablemente que su factura
+{{ invoice.invoice_id }} por {{ amount_display }} vence el {{ due_date_display }}
+(en {{ days_until_due }} día(s)).
+
+{% if invoice.payment_link %}Puede realizar su pago aquí: {{ invoice.payment_link }}
+{% endif %}{% if company.payment_instructions %}
+{{ company.payment_instructions }}
+{% endif %}
+Si ya realizó el pago, por favor ignore este mensaje o compártanos su
+comprobante para actualizar nuestros registros.
+
+Quedamos a sus órdenes.
+
+{{ company.signature or company.name }}
+{% if company.phone %}Tel: {{ company.phone }}{% endif %}
