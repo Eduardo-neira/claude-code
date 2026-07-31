@@ -1,0 +1,267 @@
+{
+  "name": "GP · Facturación automática post-servicio",
+  "meta": {
+    "descripcion": "Detecta servicios completados con pago confirmado, calcula la tarifa (base + geocerca - descuento + IVA) vía la función SQL calcular_tarifa_servicio, timbra el CFDI en Facturama, registra la factura y avisa al cliente por WhatsApp/Troncalnet.",
+    "requisitos": [
+      "Credencial Postgres apuntando al Supabase de GP (migración 0001 aplicada).",
+      "Credencial HTTP Header Auth 'Facturama API' (Basic auth con usuario/contraseña Facturama).",
+      "Credencial HTTP para Troncalnet/WhatsApp Business.",
+      "Variable de entorno N8N: EDUARDO_WHATSAPP para alertas de error."
+    ]
+  },
+  "nodes": [
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            { "field": "minutes", "minutesInterval": 10 }
+          ]
+        }
+      },
+      "id": "trigger-schedule",
+      "name": "Cada 10 min",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [-960, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT servicio_id, contrato_id, cliente_id, numero_contrato, plaza,\n       tipo_servicio_clave, cantidad_unidades, lat, lng, completado_en, operador\nFROM servicios_por_facturar\nLIMIT 25;",
+        "options": {}
+      },
+      "id": "pg-por-facturar",
+      "name": "Servicios por facturar",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-740, 300],
+      "credentials": {
+        "postgres": { "id": "REEMPLAZAR", "name": "Supabase GP" }
+      }
+    },
+    {
+      "parameters": {
+        "options": { "reset": false }
+      },
+      "id": "loop",
+      "name": "Un servicio a la vez",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [-520, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT calcular_tarifa_servicio('{{ $json.servicio_id }}'::uuid) AS desglose;",
+        "options": {}
+      },
+      "id": "pg-calcular",
+      "name": "Calcular tarifa (SQL)",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [-300, 300],
+      "credentials": {
+        "postgres": { "id": "REEMPLAZAR", "name": "Supabase GP" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Aplana el desglose JSONB y adjunta datos del servicio original.\nconst d = $json.desglose;\nif (!d || d.facturable === false) {\n  return [{ json: { facturable: false, servicio_id: d ? d.servicio_id : null } }];\n}\nreturn [{ json: d }];"
+      },
+      "id": "code-preparar",
+      "name": "Preparar desglose",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [-80, 300]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": { "caseSensitive": true, "typeValidation": "strict" },
+          "conditions": [
+            {
+              "leftValue": "={{ $json.facturable }}",
+              "rightValue": true,
+              "operator": { "type": "boolean", "operation": "true", "singleValue": true }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "id": "if-facturable",
+      "name": "¿Facturable?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [140, 300]
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT cl.nombre_razon_social, cl.rfc, cl.regimen_fiscal, cl.uso_cfdi,\n       cl.codigo_postal_fiscal, cl.contacto_email, cl.contacto_telefono,\n       co.forma_pago, co.metodo_pago, co.numero_contrato\nFROM clientes cl\nJOIN contratos co ON co.cliente_id = cl.id\nWHERE cl.id = '{{ $json.cliente_id }}'::uuid\n  AND co.id = '{{ $json.contrato_id }}'::uuid\nLIMIT 1;",
+        "options": {}
+      },
+      "id": "pg-fiscal",
+      "name": "Datos fiscales cliente",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [360, 200],
+      "credentials": {
+        "postgres": { "id": "REEMPLAZAR", "name": "Supabase GP" }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// Construye el payload CFDI 4.0 para Facturama a partir del desglose\n// (nodo 'Preparar desglose') y los datos fiscales (nodo anterior).\nconst d = $('Preparar desglose').item.json;\nconst f = $json;\n\nconst concepto = {\n  ProductCode: d.clave_prod_serv_sat,\n  UnitCode: d.clave_unidad_sat,\n  Unit: 'Servicio',\n  Description: `Servicio ${d.tipo_servicio} · ${d.cantidad_unidades} unidad(es) ${d.tipo_unidad} · ${f.numero_contrato}${d.geocerca_nombre ? ' · ' + d.geocerca_nombre : ''}`,\n  IdentificationNumber: d.servicio_id,\n  Quantity: 1,\n  UnitPrice: d.base_gravable,\n  Subtotal: d.base_gravable,\n  Discount: 0,\n  TaxObject: '02',\n  Taxes: [\n    {\n      Name: 'IVA',\n      Rate: d.iva_tasa,\n      Total: d.iva,\n      Base: d.base_gravable,\n      IsRetention: false,\n      IsFederalTax: true\n    }\n  ],\n  Total: d.total\n};\n\nconst cfdi = {\n  NameId: '1',\n  CfdiType: 'I',\n  ExpeditionPlace: '64000',\n  PaymentForm: f.forma_pago || '03',\n  PaymentMethod: f.metodo_pago || 'PUE',\n  Currency: 'MXN',\n  Receiver: {\n    Rfc: f.rfc,\n    Name: f.nombre_razon_social,\n    CfdiUse: f.uso_cfdi || 'G03',\n    FiscalRegime: f.regimen_fiscal,\n    TaxZipCode: f.codigo_postal_fiscal\n  },\n  Items: [concepto]\n};\n\nreturn [{ json: { cfdi, desglose: d, fiscal: f } }];"
+      },
+      "id": "code-cfdi",
+      "name": "Armar CFDI",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [580, 200]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.facturama.mx/3/cfdis",
+        "authentication": "genericCredentialType",
+        "genericAuthType": "httpBasicAuth",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify($json.cfdi) }}",
+        "options": {}
+      },
+      "id": "http-facturama",
+      "name": "Facturama · Timbrar CFDI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [800, 200],
+      "credentials": {
+        "httpBasicAuth": { "id": "REEMPLAZAR", "name": "Facturama API" }
+      },
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "WITH nueva AS (\n  INSERT INTO facturas (\n    servicio_id, contrato_id, cliente_id,\n    subtotal, recargo_zona, descuento, iva, total,\n    geocerca_id, geocerca_nombre, desglose,\n    estado_cfdi, facturama_id, uuid_fiscal, pdf_url, xml_url, timbrado_en\n  ) VALUES (\n    '{{ $('Preparar desglose').item.json.servicio_id }}'::uuid,\n    '{{ $('Preparar desglose').item.json.contrato_id }}'::uuid,\n    '{{ $('Preparar desglose').item.json.cliente_id }}'::uuid,\n    {{ $('Preparar desglose').item.json.subtotal }},\n    {{ $('Preparar desglose').item.json.recargo_zona }},\n    {{ $('Preparar desglose').item.json.descuento }},\n    {{ $('Preparar desglose').item.json.iva }},\n    {{ $('Preparar desglose').item.json.total }},\n    {{ $('Preparar desglose').item.json.geocerca_id ? \"'\" + $('Preparar desglose').item.json.geocerca_id + \"'::uuid\" : 'NULL' }},\n    {{ $('Preparar desglose').item.json.geocerca_nombre ? \"'\" + $('Preparar desglose').item.json.geocerca_nombre.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n    '{{ JSON.stringify($('Preparar desglose').item.json).replace(/'/g, \"''\") }}'::jsonb,\n    'timbrada',\n    '{{ $json.Id }}',\n    '{{ $json.Complement.TaxStamp.Uuid }}',\n    'https://api.facturama.mx/cfdi/pdf/issued/{{ $json.Id }}',\n    'https://api.facturama.mx/cfdi/xml/issued/{{ $json.Id }}',\n    NOW()\n  ) RETURNING id\n)\nUPDATE servicios SET factura_id = (SELECT id FROM nueva), estado = 'facturado'\nWHERE id = '{{ $('Preparar desglose').item.json.servicio_id }}'::uuid\nRETURNING factura_id;",
+        "options": {}
+      },
+      "id": "pg-registrar",
+      "name": "Registrar factura + marcar servicio",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1020, 120],
+      "credentials": {
+        "postgres": { "id": "REEMPLAZAR", "name": "Supabase GP" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.troncalnet.example/whatsapp/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: $('Datos fiscales cliente').item.json.contacto_telefono, message: `Hola ${$('Datos fiscales cliente').item.json.nombre_razon_social}, tu servicio del contrato ${$('Datos fiscales cliente').item.json.numero_contrato} fue realizado. Adjuntamos tu factura por $${$('Preparar desglose').item.json.total} MXN (IVA incluido). Gracias por confiar en Grupo Portátil 🟢`, pdf: `https://api.facturama.mx/cfdi/pdf/issued/${$json.Id || ''}` }) }}",
+        "options": {}
+      },
+      "id": "http-whatsapp",
+      "name": "WhatsApp cliente (Troncalnet)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1240, 120],
+      "credentials": {
+        "httpHeaderAuth": { "id": "REEMPLAZAR", "name": "Troncalnet API" }
+      },
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO facturas (\n  servicio_id, contrato_id, cliente_id,\n  subtotal, recargo_zona, descuento, iva, total,\n  geocerca_id, geocerca_nombre, desglose,\n  estado_cfdi, error_mensaje\n) VALUES (\n  '{{ $('Preparar desglose').item.json.servicio_id }}'::uuid,\n  '{{ $('Preparar desglose').item.json.contrato_id }}'::uuid,\n  '{{ $('Preparar desglose').item.json.cliente_id }}'::uuid,\n  {{ $('Preparar desglose').item.json.subtotal }},\n  {{ $('Preparar desglose').item.json.recargo_zona }},\n  {{ $('Preparar desglose').item.json.descuento }},\n  {{ $('Preparar desglose').item.json.iva }},\n  {{ $('Preparar desglose').item.json.total }},\n  {{ $('Preparar desglose').item.json.geocerca_id ? \"'\" + $('Preparar desglose').item.json.geocerca_id + \"'::uuid\" : 'NULL' }},\n  {{ $('Preparar desglose').item.json.geocerca_nombre ? \"'\" + $('Preparar desglose').item.json.geocerca_nombre.replace(/'/g, \"''\") + \"'\" : 'NULL' }},\n  '{{ JSON.stringify($('Preparar desglose').item.json).replace(/'/g, \"''\") }}'::jsonb,\n  'error',\n  '{{ JSON.stringify($json).replace(/'/g, \"''\").slice(0, 900) }}'\n) RETURNING id;",
+        "options": {}
+      },
+      "id": "pg-error",
+      "name": "Registrar error de timbrado",
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [1020, 360],
+      "credentials": {
+        "postgres": { "id": "REEMPLAZAR", "name": "Supabase GP" }
+      }
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://api.troncalnet.example/whatsapp/send",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ to: $env.EDUARDO_WHATSAPP, message: `⚠️ Error al timbrar CFDI del servicio ${$('Preparar desglose').item.json.servicio_id} (contrato ${$('Preparar desglose').item.json.contrato_id}). Revisar en Facturama/Supabase.` }) }}",
+        "options": {}
+      },
+      "id": "http-alerta-eduardo",
+      "name": "Alerta a Eduardo",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [1240, 360],
+      "credentials": {
+        "httpHeaderAuth": { "id": "REEMPLAZAR", "name": "Troncalnet API" }
+      },
+      "onError": "continueRegularOutput"
+    }
+  ],
+  "connections": {
+    "Cada 10 min": {
+      "main": [[{ "node": "Servicios por facturar", "type": "main", "index": 0 }]]
+    },
+    "Servicios por facturar": {
+      "main": [[{ "node": "Un servicio a la vez", "type": "main", "index": 0 }]]
+    },
+    "Un servicio a la vez": {
+      "main": [
+        [],
+        [{ "node": "Calcular tarifa (SQL)", "type": "main", "index": 0 }]
+      ]
+    },
+    "Calcular tarifa (SQL)": {
+      "main": [[{ "node": "Preparar desglose", "type": "main", "index": 0 }]]
+    },
+    "Preparar desglose": {
+      "main": [[{ "node": "¿Facturable?", "type": "main", "index": 0 }]]
+    },
+    "¿Facturable?": {
+      "main": [
+        [{ "node": "Datos fiscales cliente", "type": "main", "index": 0 }],
+        [{ "node": "Un servicio a la vez", "type": "main", "index": 0 }]
+      ]
+    },
+    "Datos fiscales cliente": {
+      "main": [[{ "node": "Armar CFDI", "type": "main", "index": 0 }]]
+    },
+    "Armar CFDI": {
+      "main": [[{ "node": "Facturama · Timbrar CFDI", "type": "main", "index": 0 }]]
+    },
+    "Facturama · Timbrar CFDI": {
+      "main": [
+        [{ "node": "Registrar factura + marcar servicio", "type": "main", "index": 0 }],
+        [{ "node": "Registrar error de timbrado", "type": "main", "index": 0 }]
+      ]
+    },
+    "Registrar factura + marcar servicio": {
+      "main": [[{ "node": "WhatsApp cliente (Troncalnet)", "type": "main", "index": 0 }]]
+    },
+    "WhatsApp cliente (Troncalnet)": {
+      "main": [[{ "node": "Un servicio a la vez", "type": "main", "index": 0 }]]
+    },
+    "Registrar error de timbrado": {
+      "main": [[{ "node": "Alerta a Eduardo", "type": "main", "index": 0 }]]
+    },
+    "Alerta a Eduardo": {
+      "main": [[{ "node": "Un servicio a la vez", "type": "main", "index": 0 }]]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "pinData": {}
+}
