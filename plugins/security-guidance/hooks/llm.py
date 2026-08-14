@@ -341,7 +341,7 @@ def _call_claude_via_sdk(prompt, output_schema, *, max_tokens=16000, model=None)
                 SECURITY_REVIEW_MODEL if chosen_model != SECURITY_REVIEW_MODEL else None
             ),
             env=_agentic_spawn_env(),
-            stderr=lambda l: _captured_stderr.append(l),
+            stderr=lambda line: _captured_stderr.append(line),
         )
 
         async def _once():
@@ -1141,7 +1141,7 @@ def agentic_review(
     )
     user_prompt = (
         "Review this change for security vulnerabilities.\n\n"
-        f"Changed files (you may Read these and any other file in the repo):\n"
+        "Changed files (you may Read these and any other file in the repo):\n"
         + "\n".join(f"  - {p}" for p in touched_paths[:50])
         + context_note
         + "\n\nUnified diff (only + lines are new):\n\n"
@@ -1694,4 +1694,3 @@ Respond with JSON."""
         lines.append("")
 
     return "\n".join(lines)
-

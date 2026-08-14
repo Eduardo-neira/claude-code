@@ -242,6 +242,7 @@ def capture_git_baseline(cwd):
 _REVIEWED_SHAS_BASENAME = "sg-reviewed-shas"
 _REVIEWED_SHAS_CAP = 500
 
+
 def _reviewed_shas_path(repo_root):
     gd = _git_dir(repo_root)
     return os.path.join(gd, _REVIEWED_SHAS_BASENAME) if gd else None
@@ -349,6 +350,7 @@ def _list_untracked(cwd):
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError) as e:
         debug_log(f"_list_untracked error: {e}")
         return {}
+
 
 def compute_v2_review_set(cwd, baseline_sha, head_at_capture, untracked_at_baseline=None):
     """v2 diff strategy: derive the review set from git state alone.

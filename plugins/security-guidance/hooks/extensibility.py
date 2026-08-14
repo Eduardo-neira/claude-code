@@ -248,6 +248,7 @@ def _glob_match(path: str, include: Tuple[str, ...], exclude: Tuple[str, ...]) -
     """Match a path against include/exclude globs. ``**`` matches any depth."""
     norm = path.replace(os.sep, "/")
     base = os.path.basename(norm)
+
     def _hit(globs: Tuple[str, ...]) -> bool:
         return any(
             fnmatch.fnmatch(norm, g) or fnmatch.fnmatch(base, g) for g in globs

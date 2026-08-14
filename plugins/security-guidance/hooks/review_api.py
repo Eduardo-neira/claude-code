@@ -326,7 +326,7 @@ def tag_diff_anchor(
             return True
         toks = vc.split()
         for i in range(max(1, len(toks) - 2)):
-            if " ".join(toks[i : i + 3]) in added_norm:
+            if " ".join(toks[i:i + 3]) in added_norm:
                 return True
         for ln in added:
             ln_n = _norm(ln)
@@ -334,7 +334,7 @@ def tag_diff_anchor(
                 return True
         if len(added) < len(removed):
             for i in range(max(1, len(toks) - 2)):
-                if " ".join(toks[i : i + 3]) in removed_norm:
+                if " ".join(toks[i:i + 3]) in removed_norm:
                     return True
         return False
 
