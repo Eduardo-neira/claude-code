@@ -19,13 +19,14 @@ FKs reales: `sucursal_id → sucursales(id)`, `contrato_id → contratos(id)`.
 
 - **ID:** `dnD13Xduno1cVg2j` · **Estado:** publicado (activo)
 - **Endpoint (producción):** `POST https://grupoportatil.app.n8n.cloud/webhook/gp-chatbot-wa`
-- **Flujo:** `Webhook (WhatsApp) → Normalizar Mensaje → Agente Atención GP → Responder al Gateway`
+- **Flujo:** `Webhook (WhatsApp) → Normalizar Mensaje → Agente Atención GP → Enviar WhatsApp (Twilio) → Responder al Gateway`
 - **Agente (AI Agent + Claude/Anthropic)** con memoria por teléfono y 4 herramientas:
   - `Consultar_FAQ` (Supabase · lee `chatbot_faq`)
   - `Consultar_Tarifas` (Supabase · lee `chatbot_tarifas`)
   - `Registrar_Solicitud` (Supabase · inserta en `chatbot_solicitudes`)
   - `Escalar_A_Humano` (Gmail · correo a eduardo.neira@gportatil.com)
-- **Credenciales:** reutiliza las existentes (Anthropic, Supabase, Gmail).
+- **Envío saliente:** nodo `Enviar WhatsApp (Twilio)` (n8n-nodes-base.twilio, `toWhatsapp=true`, `onError=continuar`) envía la respuesta del agente al cliente. Requiere credencial `twilioApi` y el número WhatsApp de Twilio en el campo `From`. **Sin esa credencial el workflow no se puede activar** (guardado como borrador hasta conectarla).
+- **Credenciales:** reutiliza las existentes (Anthropic, Supabase, Gmail); pendiente crear la de Twilio.
 
 ### Reglas clave codificadas en el agente
 - Precios **solo** desde `Consultar_Tarifas`; si el precio está en null, **no inventa** y escala.
@@ -50,7 +51,7 @@ Se corrió el agente de extremo a extremo con 3 mensajes simulados. Con precios 
 ## Pendientes para producción real
 
 1. **Cargar precios reales** en `chatbot_tarifas` (mientras estén en null, el bot escala en vez de cotizar).
-2. **Conectar el canal WhatsApp:** apuntar Troncalnet/Twilio al endpoint del webhook. Cuando exista credencial de Twilio/WhatsApp en n8n, agregar el nodo de **envío saliente** (hoy la respuesta del bot se devuelve en el JSON `reply`).
+2. **Conectar el canal WhatsApp:** (a) apuntar Twilio al endpoint del webhook para la entrada; (b) crear la credencial `twilioApi` en n8n y poner el número WhatsApp de Twilio en el campo `From` del nodo `Enviar WhatsApp (Twilio)`; (c) publicar el workflow para activar el envío saliente.
 3. **Alta de QRO** en `sucursales` cuando aplique.
 4. **Prueba piloto** con un grupo chico para validar FAQ faltantes y el enrutamiento de escalamiento.
 
