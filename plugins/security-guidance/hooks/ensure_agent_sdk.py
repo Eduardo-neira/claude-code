@@ -66,7 +66,6 @@ def main() -> tuple[int, str, str]:
     if sys.platform == "win32":
         return SKIP_WIN32, "", ""
 
-
     if _sdk_on_syspath():
         return NOOP_SYSTEM, "", ""
 

@@ -158,4 +158,3 @@ def with_locked_state(session_id, callback):
                 os.close(lock_fd)
             except (OSError, IOError):
                 pass
-

@@ -56,18 +56,12 @@ try:
     import fcntl
 except ImportError:
     fcntl = None
-import contextlib
-import glob
 import json
 import os
 import random
 import re
 import subprocess
 import sys
-import threading
-import urllib.request
-from datetime import datetime
-from enum import IntEnum
 from typing import Optional, Tuple, Dict, Any, List
 
 # review_api is the importable surface for the agentic-review prompts,
@@ -76,7 +70,7 @@ from typing import Optional, Tuple, Dict, Any, List
 # without going through the CC hook protocol.  The underscored names below
 # alias into it so this script stays the single CC-hook entrypoint.
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
-import review_api  # noqa: E402
+import review_api  # noqa: E402,F401
 from _base import (  # noqa: E402,F401
     DEBUG_LOG_FILE, DEBUG_LOG_MAX_BYTES, debug_log,
     PROVENANCE_TAG, PROVENANCE_BANNER,
@@ -190,6 +184,7 @@ CONTINUATION_SUFFIX = (
     "response."
 )
 
+
 def emit_metrics(metrics, rewake_summary=None):
     """
     Write a SyncHookJSONOutput line to stdout for Claude Code to pick up.
@@ -234,6 +229,7 @@ def emit_metrics(metrics, rewake_summary=None):
 # get_lock_file, cleanup_old_state_files, load_state, save_state,
 # with_locked_state) moved to session_state.py and re-exported above.
 
+
 def atomic_check_and_mark_warning(session_id, warning_key):
     """
     Atomically check if a warning has been shown and mark it as shown if not.
@@ -249,6 +245,7 @@ def atomic_check_and_mark_warning(session_id, warning_key):
 
     result = with_locked_state(session_id, _check)
     return result if result is not None else True
+
 
 def atomic_check_counter(session_id, counter_key, max_count):
     """
@@ -267,6 +264,7 @@ def atomic_check_counter(session_id, counter_key, max_count):
 
     result = with_locked_state(session_id, _check)
     return result if result is not None else True
+
 
 def atomic_check_rate_limit(session_id, key, max_per_window, window_s):
     """Rolling-window rate limit: allow at most `max_per_window` calls per
@@ -318,6 +316,7 @@ def atomic_check_rate_limit(session_id, key, max_per_window, window_s):
 # State key: pending_warnings: {"<file>:<rule>": true}
 # =====================================================================
 
+
 def record_pending_warnings(session_id, file_path, rule_names):
     """Mark file:rule pairs as pending for the Stop-hook outcome sweep."""
     def _record(state):
@@ -328,6 +327,7 @@ def record_pending_warnings(session_id, file_path, rule_names):
         for rule in rule_names:
             pending[f"{file_path}:{rule}"] = True
     with_locked_state(session_id, _record)
+
 
 def sweep_pending_warnings(session_id):
     """
@@ -383,6 +383,7 @@ def sweep_pending_warnings(session_id):
 # Pattern matching
 # =====================================================================
 
+
 def check_patterns(file_path, content):
     """Check if file path or content matches any security patterns. Returns ALL matches."""
     normalized_path = file_path.lstrip("/")
@@ -426,6 +427,7 @@ def check_patterns(file_path, content):
 
     return matches
 
+
 def extract_content_from_input(tool_name, tool_input):
     """Extract content to check from tool input based on tool type."""
     if tool_name == "Write":
@@ -442,6 +444,7 @@ def extract_content_from_input(tool_name, tool_input):
 # =====================================================================
 # Hook handlers
 # =====================================================================
+
 
 def handle_user_prompt_submit(input_data):
     """
@@ -514,6 +517,7 @@ def handle_user_prompt_submit(input_data):
 
     sys.exit(0)
 
+
 def _resolve_amend_pre_sha(repo_root, expected_post_sha=None):
     """For a `git commit --amend` we just ran, return the pre-amend SHA via
     reflog, or None if it can't be safely determined.
@@ -571,6 +575,7 @@ def _resolve_amend_pre_sha(repo_root, expected_post_sha=None):
     if expected_post_sha and not head0_sha.startswith(expected_post_sha):
         return None
     return head1_sha or None
+
 
 # git-only signals that corroborate a real commit object — NOT emitted by
 # pre-commit / lint-staged / husky hook output, which can contain bracketed
@@ -643,6 +648,7 @@ MAX_PUSH_SWEEP_FILES = int(os.environ.get("SG_PUSH_SWEEP_MAX_FILES", "30"))
 MAX_PUSH_SWEEP_RANGE = int(os.environ.get("SG_PUSH_SWEEP_MAX_RANGE", "50"))
 PUSH_SWEEP_REPORT_CAP = int(os.environ.get("SG_PUSH_SWEEP_REPORT_CAP", "3"))
 
+
 def _claim_bash_hook_once(input_data):
     """De-dupe across hooks.json `if` matchers firing for the same Bash call.
 
@@ -695,6 +701,7 @@ def _claim_bash_hook_once(input_data):
         # silently dropping the review.
         return True
 
+
 def is_push_sweep_enabled():
     """Gate for the push-sweep PostToolUse[Bash] hook.
 
@@ -712,7 +719,9 @@ def is_push_sweep_enabled():
         return False
     return True
 
+
 PUSH_SWEEP_ENABLED = is_push_sweep_enabled()
+
 
 def _compute_push_sweep_base(prev_upstream, push_range, reviewed):
     """Advance the diff base past the contiguous reviewed prefix.
@@ -735,6 +744,7 @@ def _compute_push_sweep_base(prev_upstream, push_range, reviewed):
         return None, []
     base = push_range[i - 1] if i > 0 else prev_upstream
     return base, push_range[i:]
+
 
 def _push_section(bash_output):
     """Return the slice of `bash_output` that contains the push's range lines.
@@ -772,6 +782,7 @@ def _push_section(bash_output):
     if end >= 0:
         section = section[:end]
     return section
+
 
 def _detect_prev_upstream(repo_root, bash_output):
     """Where the remote was BEFORE this push.
@@ -812,6 +823,7 @@ def _detect_prev_upstream(repo_root, bash_output):
             pass
     return None
 
+
 def is_commit_review_enabled():
     """Gate for the commit-review PostToolUse[Bash] hook.
 
@@ -827,7 +839,9 @@ def is_commit_review_enabled():
         return override == "on"
     return True
 
+
 COMMIT_REVIEW_ENABLED = is_commit_review_enabled()
+
 
 def _agentic_review_with_race(
     repo_root: str,
@@ -881,7 +895,7 @@ def _agentic_review_with_race(
             g, v = analyze_code_security(
                 diff_files, is_diff=True, previous_findings=previous_findings
             )
-        except Exception as e:  # pragma: no cover
+        except Exception:  # pragma: no cover
             g, v = None, []
         try:
             q.put_nowait(("fallback", (g, v, {"agentic": False})))
@@ -897,6 +911,7 @@ def _agentic_review_with_race(
     m["race_delay_s"] = delay_s
     m["race_started"] = 1 if fallback_started.is_set() else 0
     return g, v, m
+
 
 def handle_commit_review_posttooluse(input_data):
     """PostToolUse handler for Bash — reviews git commits for security issues.
@@ -920,7 +935,7 @@ def handle_commit_review_posttooluse(input_data):
         # cases where CC's command matching fails open and spawns the hook anyway.
         sys.exit(0)
 
-    debug_log(f"Commit review: detected git commit in command")
+    debug_log("Commit review: detected git commit in command")
 
     # Bash tool_response has no exit_code field (only stdout, stderr,
     # interrupted), so success is inferred from the output text — the same
@@ -1375,6 +1390,7 @@ def handle_commit_review_posttooluse(input_data):
                      + CONTINUATION_SUFFIX + "\n")
     sys.exit(2)
 
+
 def handle_push_sweep_posttooluse(input_data):
     """Review the just-pushed range as one diff, advancing the base past the
     contiguous prefix of already-per-commit-reviewed shas.
@@ -1668,6 +1684,7 @@ def handle_push_sweep_posttooluse(input_data):
          "vulnerableCode": v.get("vulnerableCode", "")}
         for v in reported
     ]
+
     def _record(state):
         existing = [f for f in state.get("previous_findings", [])
                     if isinstance(f, dict)]
@@ -1675,7 +1692,8 @@ def handle_push_sweep_posttooluse(input_data):
         for f in snapshots:
             k = (f["filePath"], f["category"])
             if k not in seen:
-                seen.add(k); existing.append(f)
+                seen.add(k)
+                existing.append(f)
         state["previous_findings"] = existing
         state["previous_findings_ts"] = _time.time()
     with_locked_state(session_id, _record)
@@ -1696,6 +1714,7 @@ def handle_push_sweep_posttooluse(input_data):
         PROVENANCE_BANNER + "\n\n" + guidance + CONTINUATION_SUFFIX + "\n"
     )
     sys.exit(2)
+
 
 def handle_stop_hook(input_data):
     """
@@ -1971,10 +1990,12 @@ def handle_stop_hook(input_data):
     })
     sys.exit(0)
 
+
 _SDK_BOOTSTRAP_THROTTLE = os.path.join(
     os.environ.get("SECURITY_WARNINGS_STATE_DIR")
     or os.path.expanduser("~/.claude/security"),
     ".sdk_bootstrap_spawned")
+
 
 def _maybe_bootstrap_agent_sdk_async():
     """Fire-and-forget SDK bootstrap, for remote-pod environments.
@@ -2015,6 +2036,7 @@ def _maybe_bootstrap_agent_sdk_async():
         )
     except Exception:
         pass  # best-effort; never break the hook over a bootstrap attempt
+
 
 def main():
     """Main hook function."""
@@ -2187,6 +2209,7 @@ def main():
             }))
 
     sys.exit(0)
+
 
 if __name__ == "__main__":
     main()

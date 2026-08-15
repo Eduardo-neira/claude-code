@@ -154,4 +154,3 @@ def _usage_metrics():
             "cost_usd": round(_USAGE["cost"], 6),
             "api_calls": _USAGE["n"],
         }
-

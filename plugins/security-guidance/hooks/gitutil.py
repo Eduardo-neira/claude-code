@@ -43,8 +43,6 @@ def _git_rev_parse_head(cwd):
         return None
 
 
-
-
 def _find_git_index(cwd):
     """
     Find the real index file for a git repo. Handles worktrees where .git
@@ -373,7 +371,6 @@ def _git_status_porcelain(cwd):
         return None, None
 
 
-
 def _is_ancestor(cwd, maybe_ancestor, descendant):
     """True if `maybe_ancestor` is reachable from `descendant` (i.e. HEAD
     moved forward via commit/merge, not sideways via checkout)."""
@@ -385,7 +382,6 @@ def _is_ancestor(cwd, maybe_ancestor, descendant):
         return result.returncode == 0
     except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
         return False
-
 
 
 def get_git_diff(cwd, baseline_sha, full_context=False, paths=None, untracked_paths=None):
@@ -611,7 +607,6 @@ def extract_file_paths_from_diff(diff_output):
     return paths
 
 
-
 def parse_diff_into_files(diff_output):
     """
     Parse unified diff output into a list of (file_path, diff_content) tuples.
@@ -684,7 +679,7 @@ def filter_preexisting_from_diff(diff_files, cwd, baseline_sha):
             continue
 
         # Check what fraction of added lines were pre-existing
-        preexisting_count = sum(1 for l in added_lines if l in removed_lines)
+        preexisting_count = sum(1 for line in added_lines if line in removed_lines)
         if preexisting_count == 0:
             filtered.append((file_path, diff_content))
             continue
@@ -720,4 +715,3 @@ def filter_preexisting_from_diff(diff_files, cwd, baseline_sha):
         filtered.append((file_path, '\n'.join(new_lines)))
 
     return filtered
-
