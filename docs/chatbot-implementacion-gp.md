@@ -33,6 +33,20 @@ FKs reales: `sucursal_id → sucursales(id)`, `contrato_id → contratos(id)`.
 - Escala a humano ante queja, incidencia, negociación, cobranza/factura compleja o petición explícita.
 - Distingue plaza (MTY `sucursal_id=1` / QRO).
 
+## Pruebas realizadas (agente en vivo, contra Claude + Supabase)
+
+Se corrió el agente de extremo a extremo con 3 mensajes simulados. Con precios de prueba temporales (ya revertidos a null):
+
+| Caso | Mensaje | Resultado |
+|---|---|---|
+| Cotización | "¿cuánto cuesta un baño estándar al mes en Apodaca?" | Devolvió el precio real de `chatbot_tarifas`, detectó plaza MTY y avanzó a agendar. ✅ |
+| Escalamiento | "llevo 3 días esperando que recojan el baño… pésimo servicio" | Detectó la queja, respondió con empatía y disparó `Escalar_A_Humano` con correo bien armado (teléfono, plaza, motivo, contexto). Lógica ✅ |
+| Anti-invención | "un baño tipo evento por todo el mes, ¿cuánto al mes?" (precio en null) | NO inventó el precio; avisó que lo confirma con el equipo y escaló. ✅ |
+
+**Hallazgo:** el correo de escalamiento se compone bien pero **no se envía**: la credencial **Gmail account** en n8n está desconectada (token OAuth expirado/revocado). Error: *"The credential 'Gmail account' needs to be reconnected."* Se debe **reconectar la credencial de Gmail** en n8n. Claude y Supabase funcionaron sin problema.
+
+> Los precios de prueba se revirtieron a null tras validar; la base no contiene números falsos.
+
 ## Pendientes para producción real
 
 1. **Cargar precios reales** en `chatbot_tarifas` (mientras estén en null, el bot escala en vez de cotizar).
