@@ -1,0 +1,25 @@
+{
+  "name": "nodejs-fundamentals",
+  "version": "1.0.0",
+  "description": "API REST de ejemplo con Express que ilustra los fundamentos de Node.js: modulos ES, middleware, rutas, controladores y un CRUD completo.",
+  "type": "module",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "dev": "node --watch index.js",
+    "test": "node --test"
+  },
+  "keywords": [
+    "nodejs",
+    "express",
+    "rest",
+    "api",
+    "fundamentos",
+    "ejemplo"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "express": "^4.19.2"
+  }
+}
