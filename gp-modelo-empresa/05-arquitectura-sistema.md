@@ -9,7 +9,8 @@
 ```text
 EXPERIENCIA
 ├── Dashboard de operadores        ✅ construido (vacío)
-├── AppSheet (campo)               ✅ en uso
+├── SimpliRoute (campo)            ✅ en uso — aquí vive el servicio ejecutado
+├── AppSheet                       ⚠️ en uso, papel por aclarar
 ├── Chatbot WhatsApp               ⚠️ 18 FAQ + 5 tarifas, 0 conversaciones
 ├── Portal de cliente              ❌ no existe
 └── Tablero ejecutivo              ⚠️ corte semanal manual
@@ -24,8 +25,8 @@ DOMINIO
 ├── Clientes                       ❌
 ├── Contratos                      ✅
 ├── Flota                          ✅
-├── Servicios                      ⚠️ modelado, sin datos
-├── Rutas                          ⚠️ modelado, sin datos
+├── Servicios                      ⚠️ modelado, sin datos (viven en SimpliRoute)
+├── Rutas                          ⚠️ modelado, sin datos (viven en SimpliRoute)
 ├── Insumos                        ✅ modelado, sin datos
 └── Dinero                         ⚠️ parcial
 
@@ -61,7 +62,7 @@ pasa en campo llegue a la base.
 | Automatización | n8n | ✅ n8n | Igual |
 | Geoespacial | *(no lo contempla)* | ✅ **PostGIS** | **GP va adelante** |
 | Facturación | *(genérico)* | ✅ Facturama CFDI 4.0 | GP va adelante |
-| App de campo | driver-app propia | ✅ **AppSheet** | Suficiente. No construir app propia |
+| App de campo | driver-app propia | ✅ **SimpliRoute** | Suficiente. No construir app propia |
 | Ruteo | routing service propio | ✅ **SimpliRoute** | Suficiente. Falta sincronizar |
 | GPS | *(no lo contempla)* | ✅ Intellihub/Troncalnet | GP va adelante |
 | Frontend | Next.js + TypeScript | ⚠️ HTML suelto (dashboard) | Solo si hace falta portal |
@@ -79,32 +80,49 @@ facturación fiscal mexicana) está por delante del blueprint. Redis, LangGraph,
 dbt y un frontend propio son destino, no necesidad. Agregar herramientas ahora
 aumenta superficie sin resolver el cuello de botella.
 
+EcoSan propone construir una `driver-app` propia. **GP no la necesita:**
+SimpliRoute ya cumple ese papel y además rutea. Construir una app de campo
+sería reemplazar algo que funciona y que el equipo ya usa a diario.
+
 ---
 
 ## El cableado que falta
 
-Tres puentes. Son el proyecto entero de la fase 1:
+**Dos puentes** (no tres: SimpliRoute resuelve ruta y servicio en la misma
+integración). Son el proyecto entero de la fase 1:
 
 ```text
-┌────────────┐   PUENTE 1 (crítico)   ┌─────────────┐
-│  AppSheet   │ ───────────────────► │   Supabase   │
-│  (campo)    │   servicio ejecutado   │  servicios   │
-└─────────────┘   + evidencia + GPS    └─────────────┘
+┌─────────────┐   PUENTE 1 (crítico)   ┌──────────────┐
+│ SimpliRoute │ ─────────────────────► │   Supabase   │
+│   (campo)   │   ruta + paradas       │   rutas      │
+│             │   servicio ejecutado   │   servicios  │
+│             │   evidencia + GPS      │   evidencias │
+└─────────────┘   + tiempos reales     └──────────────┘
 
-┌────────────┐   PUENTE 2             ┌─────────────┐
-│ SimpliRoute │ ───────────────────► │   Supabase   │
-│  (rutas)    │   ruta + paradas       │ rutas        │
-└─────────────┘   + tiempos reales     └─────────────┘
-
-┌────────────┐   PUENTE 3             ┌─────────────┐
-│ Banco/Sheet │ ───────────────────► │   Supabase   │
-│ (cobranza)  │   pago conciliado      │ cobros       │
-└─────────────┘                        └─────────────┘
+┌─────────────┐   PUENTE 2             ┌──────────────┐
+│ Banco/Sheet │ ─────────────────────► │   Supabase   │
+│ (cobranza)  │   pago conciliado      │   cobros     │
+└─────────────┘                        └──────────────┘
 ```
 
+**Confirmado por Eduardo (2026-08-17):** el operador cierra la visita en
+**SimpliRoute**, no en AppSheet. Eso simplifica la arquitectura: una sola
+integración trae la ruta, sus paradas, los tiempos reales, el checkout con GPS y
+la evidencia.
+
 **Puente 1 es el que manda.** Sin él no hay dashboard, ni facturación, ni
-insumos, ni KPIs. Los campos de destino ya existen (`checkout_lat`,
-`checkout_lng`, `checkout_time`, `simpliroute_visit_id`, `checklist_ok`).
+insumos, ni KPIs. Los campos de destino ya existen y fueron diseñados para esto:
+`servicios.simpliroute_visit_id`, `servicios.source`, `servicios.checkout_lat/lng`,
+`servicios.checkout_time`, `servicios.hora_llegada`, `rutas.simpliroute_id`,
+`rutas.simpliroute_url`.
+
+### Ventaja frente al plan anterior
+SimpliRoute expone API REST y webhooks: el dato se jala por sistema, sin depender
+de que el operador capture dos veces. Un puente desde una app de campo genérica
+habría requerido cambiar el hábito en campo; este no.
+
+⚠️ **Pendiente:** aclarar qué papel cumple **AppSheet** hoy, si no es el cierre
+de servicio. Hasta saberlo no se puede decidir si se conserva, se reduce o se retira.
 
 ---
 
@@ -129,7 +147,7 @@ gp-platform/
 ```text
 claude-code/
 ├── gp-modelo-empresa/       ← documentación (este directorio)
-├── gp-flujo-facturacion/    ← facturación post-servicio
+├── gp-flujo-facturacion/    ← facturación
 └── operaciones/
     ├── inventario-insumos/
     └── dashboard-desempeno-operadores/
@@ -140,8 +158,9 @@ código ajeno. A mediano plazo confunde.
 
 ### Recomendación
 **Opción B hasta terminar la fase 1; después migrar a un repo `gp-platform` propio.**
-Motivo: la fase 1 es SQL, n8n y AppSheet — casi no toca estructura de repo.
-Reorganizar antes gasta tiempo en carpetas en vez de en el cuello de botella.
+Motivo: la fase 1 es SQL, n8n e integración con SimpliRoute — casi no toca
+estructura de repo. Reorganizar antes gasta tiempo en carpetas en vez de en el
+cuello de botella.
 
 ⚠️ Independientemente de la opción: **el código de GP debería salir del fork de
 `claude-code`**. Hoy convive con `examples/`, `plugins/` y el `CHANGELOG.md` de
@@ -176,8 +195,8 @@ años de analítica.** Separar el warehouse antes de necesitarlo es complejidad 
 | Vista expuesta a `anon` | ⚠️ `vista_desempeno_operadores` — solo agregados, aceptable |
 | Roles de aplicación | ⚠️ solo `admin` y `oficina` |
 | Auditoría de cambios | ❌ no existe |
-| Secretos | `[?]` no auditado en este corte |
+| Credenciales de SimpliRoute | `[?]` a resguardar en n8n al construir el puente |
 
-**Prioridad de seguridad:** ampliar roles **antes** de que AppSheet y el chatbot
-escriban en Supabase. Un operador con la llave equivocada puede leer precios y
-cartera completa.
+**Prioridad de seguridad:** ampliar roles **antes** de que el chatbot y las
+integraciones escriban en Supabase. Un token con la llave equivocada puede leer
+precios y cartera completa.
