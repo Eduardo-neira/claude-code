@@ -104,6 +104,7 @@ create table sitios (
   notas_acceso      text,                      -- hoy se pierde en observaciones
   ventana_inicio    time,                      -- obras: 7:00
   ventana_fin       time,                      -- obras: 16:00
+  simpliroute_ref   text,                      -- amarre con la visita de SimpliRoute
   sucursal_id       integer references sucursales(id),
   activo            boolean not null default true,
   created_at        timestamptz not null default now()
@@ -113,40 +114,74 @@ alter table contratos add column if not exists sitio_id integer references sitio
 ```
 
 **Nota:** 60 contratos activos no tienen coordenadas. Esos sitios nacen sin
-geolocalizar y **no podrán resolver recargo por geocerca**. Completarlos es
-prerrequisito de la facturación por zona.
+geolocalizar y **no podrán resolver recargo por geocerca ni amarrarse por
+coordenada con SimpliRoute**. Completarlos es prerrequisito de las dos cosas.
 
 ---
 
 ## Cambio 3 · Desarmar `datos_fiscales` — Prioridad 1
 
+**Confirmado por Eduardo (2026-08-17):** `TORREON` y `SALTILLO` son **razones
+sociales distintas — empresas hermanas de familiares, con administración y
+finanzas aparte**. No son plazas de operación ni divisiones de GP.
+
+Eso cambia el propósito de la separación. No se trata solo de timbrar con el RFC
+correcto: se trata de que **los ingresos de terceros no se cuenten como de GP**.
+
 Un campo de texto carga tres conceptos. Se separan:
 
 ```sql
-create table emisores (
+create table entidades_facturacion (
   id             integer generated always as identity primary key,
   clave          text unique not null,      -- 'GP', 'TORREON', 'SALTILLO'
   razon_social   text not null,
-  rfc            text not null,
-  regimen_fiscal text,
+  rfc            text,
+  es_grupo_portatil boolean not null default false,  -- ← la columna que importa
+  notas          text,
   activo         boolean not null default true
 );
 
-alter table contratos
-  add column if not exists es_fiscal  boolean,
-  add column if not exists emisor_id  integer references emisores(id);
+insert into entidades_facturacion (clave, razon_social, es_grupo_portatil, notas) values
+  ('GP',       'Grupo Portátil',       true,  'Entidad principal'),
+  ('TORREON',  '(por confirmar)',      false, 'Empresa hermana, finanzas aparte'),
+  ('SALTILLO', '(por confirmar)',      false, 'Empresa hermana, finanzas aparte');
 
--- Poblado desde el texto existente:
+alter table contratos
+  add column if not exists es_fiscal boolean,
+  add column if not exists entidad_facturacion_id integer
+    references entidades_facturacion(id);
+
+-- Poblado desde el texto existente (conteos verificados en la base):
 update contratos set es_fiscal = (upper(coalesce(datos_fiscales,'')) like '%FACTURA%');
--- 'FACTURA TORREON'  -> emisor TORREON   (8 contratos)
--- 'FACTURA SALTILLO' -> emisor SALTILLO  (2 contratos)
--- 'FACTURA'          -> emisor GP        (158 contratos)
--- 'REMISION'         -> es_fiscal = false (25 contratos)
--- 'nan'              -> fila a eliminar   (1: cliente vacío, sin dirección)
+-- 'FACTURA'          -> GP,       es_fiscal = true   (158 contratos)
+-- 'REMISION'         -> GP,       es_fiscal = false  (25 contratos)
+-- 'FACTURA TORREON'  -> TORREON,  es_fiscal = true   (8 contratos)
+-- 'FACTURA SALTILLO' -> SALTILLO, es_fiscal = true   (2 contratos)
+-- 'nan'              -> fila a eliminar               (1: cliente vacío, sin dirección)
 ```
 
-⚠️ **Bloqueado por decisión de Eduardo:** confirmar si Torreón y Saltillo son
-razones sociales con RFC propio. Si no lo son, el modelo cambia.
+### La regla que se desprende
+
+Toda métrica de dinero de GP debe filtrar por `es_grupo_portatil = true`:
+
+```sql
+-- Ingreso recurrente REAL de Grupo Portátil:
+select sum(c.monto_mensual)
+from contratos c
+join entidades_facturacion e on e.id = c.entidad_facturacion_id
+where c.activo and e.es_grupo_portatil;
+```
+
+Sin ese filtro, la facturación de GP queda inflada en **$22,156 mensuales**
+(8 contratos de Torreón por $19,836 + 2 de Saltillo por $2,320) — 2.2% del total.
+
+⚠️ **No usar `rfc not null`.** Los RFC de las hermanas son de terceros y GP
+puede no necesitarlos nunca: si su propia administración timbra, GP solo debe
+**marcarlas y excluirlas**, no facturar por ellas.
+
+⚠️ **Pendiente de aclarar:** si GP les da el servicio operativo (entonces las
+9 unidades colocadas **sí** son activo de GP y cuentan para utilización) o si es
+operación ajena que solo comparte la base.
 
 Al terminar, `calcular_tarifa_servicio()` debe leer `contratos.es_fiscal` en vez
 de hacer `LIKE '%FACTURA%'` sobre texto libre.
@@ -174,22 +209,42 @@ posible. `NULL` = renovación automática mes a mes (el caso normal de GP).
 
 ## Cambio 5 · Plazas — Prioridad 1
 
+**Confirmado por Eduardo (2026-08-17): Querétaro opera, pero se lleva aparte.**
+Esta base es de Monterrey. **No se da de alta la sucursal QRO** ni se cargan sus
+unidades o contratos.
+
 Hoy: `sucursales` = 1 fila (MTY). **194 de 194 contratos con `sucursal_id` NULL.**
-Los 5 operadores también. Las 437 unidades tienen prefijo `MTY`.
+Los 5 operadores también.
 
 ```sql
-insert into sucursales (nombre, clave, ciudad, estado)
-values ('Grupo Portátil Querétaro','QRO','Santiago de Querétaro','Querétaro');
-
--- Todo lo existente es Monterrey (verificado: coordenadas 25.43-25.93 N,
--- -100.53 a -100.34 W, y los 437 códigos de unidad con prefijo MTY):
+-- Todo lo que existe en esta base es Monterrey (verificado: coordenadas
+-- 25.43-25.93 N, -100.53 a -100.34 W, y los 437 códigos con prefijo MTY):
 update contratos  set sucursal_id = 1 where sucursal_id is null;
-update operadores set sucursal_id = 1 where sucursal_id is null and alias <> 'Juan Pablo';
-update operadores set sucursal_id = 2 where alias = 'Juan Pablo';  -- base QRO
+update unidades   set sucursal_id = 1 where sucursal_id is null;
+update operadores set sucursal_id = 1 where sucursal_id is null;
 ```
 
-⚠️ **Verificar antes de correr:** ¿la operación de QRO debe vivir en esta base?
-Si sí, falta cargar sus unidades y contratos, que hoy no existen aquí.
+### Por qué sí llenar `sucursal_id` aunque solo haya una plaza
+
+Parece trabajo inútil llenar 194 filas con el mismo valor. No lo es:
+
+1. El día que QRO **sí** entre, es un `INSERT` y nada más — no una migración de
+   toda la base con riesgo sobre datos de producción.
+2. El puente de SimpliRoute necesita filtrar qué visitas son de MTY. Sin
+   `sucursal_id` poblado no hay por dónde filtrar.
+3. Las vistas y KPIs ya agrupan por plaza (`vista_desempeno_operadores` deriva la
+   plaza del contrato y hace *fallback* a `'MTY'` porque hoy siempre es NULL).
+   Ese *fallback* es una curita que conviene retirar.
+
+⚠️ **Juan Pablo** está registrado como operador (`id = 2`) pero su base es QRO.
+Si QRO se lleva aparte, decidir: ¿se marca inactivo en esta base, o se deja con
+`sucursal_id` NULL a propósito? Dejarlo como MTY sería incorrecto y ensuciaría
+la productividad por operador.
+
+### Costo aceptado de esta decisión
+La métrica #1 del corte semanal (`Unidades en renta MTY+QRO`) **nunca podrá
+salir completa de este sistema**. Seguirá armándose a mano juntando dos fuentes.
+Es una consecuencia asumida, no un descuido.
 
 ---
 
@@ -219,7 +274,7 @@ create table servicio_unidades (
 ## Cambio 7 · Evidencias — Prioridad 2
 
 Hoy: un `servicios.foto_url`. Un servicio real produce foto antes, foto después,
-firma y a veces incidencia.
+firma y a veces incidencia — y SimpliRoute ya las captura todas.
 
 ```sql
 create table servicio_evidencias (
@@ -239,6 +294,11 @@ create index on servicio_evidencias (servicio_id);
 
 **Regla:** un servicio no puede pasar a `completado` sin al menos una evidencia
 de tipo `foto_despues`.
+
+⚠️ Decidir si las imágenes se **copian** a Supabase Storage o solo se guarda la
+URL de SimpliRoute. Guardar solo la URL es más barato, pero si un día se deja de
+pagar SimpliRoute se pierde toda la evidencia histórica — justo la que sirve
+ante un reclamo.
 
 ---
 
@@ -333,8 +393,8 @@ antes bloquea operaciones legítimas y el equipo la va a rodear.
 
 ## Cambio 11 · Calendario de servicios — Prioridad 1
 
-Es lo que llena `servicios`. Hoy la programación vive en `frecuencia` (`LMV`/`MJS`)
-como texto.
+Es lo que llena `servicios` del lado planeado. Hoy la programación vive en
+`frecuencia` (`LMV`/`MJS`) como texto.
 
 ```sql
 -- Genera los servicios planeados de una semana a partir de la banda del contrato.
@@ -379,13 +439,18 @@ alter table servicios alter column completado set default false;
 
 ⚠️ Los 3 contratos con banda `EXTRA` no generan calendario: son bajo demanda.
 
+**Sinergia con el puente de SimpliRoute:** si estos servicios planeados se mandan
+a SimpliRoute con el `contrato_id` (o el `servicio.id`) en la referencia de la
+visita, el amarre de regreso queda resuelto de origen. Ver `06` §AUT-10.
+
 ---
 
 ## Cambio 12 · Eventos de dominio — Prioridad 3
 
 `event_log` existe pero es un log de idempotencia de webhooks (PK = `event_id`
 de texto, con `origen` y `payload`). No es un bus de eventos de dominio.
-Conviene dejarlo como está y crear el bus aparte:
+Conviene dejarlo como está — el puente de SimpliRoute lo va a necesitar
+exactamente para eso — y crear el bus aparte:
 
 ```sql
 create table domain_events (
@@ -414,8 +479,8 @@ alter type rol_app add value if not exists 'operador';
 alter type rol_app add value if not exists 'cliente';
 ```
 
-Y políticas RLS por rol. Crítico antes de que operadores (AppSheet) y clientes
-(chatbot) escriban directamente en Supabase.
+Y políticas RLS por rol. Crítico antes de que las integraciones y el chatbot
+escriban directamente en Supabase.
 
 ---
 
@@ -425,7 +490,7 @@ Y políticas RLS por rol. Crítico antes de que operadores (AppSheet) y clientes
 clientes
    ├── cliente_contactos
    ├── sitios
-   └── contratos
+   └── contratos ──► entidades_facturacion
           ├── contrato_unidades ──► unidades
           │                            ├── unidad_movimientos
           │                            └── mantenimientos
@@ -434,7 +499,7 @@ clientes
           │      ├── servicio_evidencias
           │      └── ruta_servicios ──► rutas ──► operadores
           ├── cobros
-          │      └── facturas ──► emisores
+          │      └── facturas          ← la factura cuelga del COBRO (mensual)
           └── (sitio_id) ──► sitios
 
 geocercas ──(PostGIS)──► tarifa del servicio
@@ -453,6 +518,7 @@ domain_events (transversal)
 - **No** crear una base aparte para cobranza porque hoy vive en Sheets.
   Migrarla al mismo Supabase es el punto.
 - **No** cambiar `integer` por `uuid` en el núcleo. Costo alto, beneficio nulo.
+- **No** colgar la factura del servicio. GP factura mensual: cuelga del `cobro`.
 
 ---
 
@@ -460,7 +526,7 @@ domain_events (transversal)
 
 | Fase | Cambios | Desbloquea |
 |---|---|---|
-| **1** | 11 (calendario) + 5 (plazas) + conciliar cobros | `servicios` deja de estar vacía; facturación automática puede disparar |
-| **2** | 1 (clientes) + 2 (sitios) + 4 (ciclo de vida) + 3 (fiscal) | Cartera, concentración, renovaciones, CFDI correcto |
+| **1** | 11 (calendario) + 5 (plazas) + puente SimpliRoute + conciliar cobros | `servicios` deja de estar vacía; la facturación mensual puede disparar |
+| **2** | 1 (clientes) + 2 (sitios) + 4 (ciclo de vida) + 3 (entidades) | Cartera, concentración, renovaciones, CFDI correcto, ingresos de GP separados |
 | **3** | 6, 7, 8, 9, 10 | Evidencia, historial de activo, integridad de flota |
 | **4** | 12, 13 | Automatización por eventos y seguridad por rol |
