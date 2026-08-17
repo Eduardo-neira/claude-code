@@ -63,6 +63,7 @@ Hoy son 4 registros sin relación entre sí.
 | Ciclo de vida | Solo hay `activo` booleano: no distingue suspendido de cancelado |
 | `sucursal_id` poblado | 194 de 194 en NULL — ningún análisis por plaza |
 | Separación de sitio | La obra vive dentro del contrato |
+| Entidad que factura | 10 contratos son de empresas hermanas y no se distinguen |
 | `monto_mensual` | 33 contratos sin él |
 
 ### Estados propuestos
@@ -140,10 +141,16 @@ historial"*. GP solo tiene el estado actual. No se puede responder:
 `Servicio` · `ServicioUnidad` · `Evidencia`
 
 ### Estado actual
-⛔ **`servicios` = 0 filas.** La tabla está bien diseñada — tiene `checkout_lat`,
+⛔ **`servicios` = 0 filas en Supabase** — pero el dato **sí existe**: vive en
+**SimpliRoute** (confirmado por Eduardo, 2026-08-17). El operador cierra ahí cada
+visita con hora, coordenada y evidencia.
+
+La tabla está bien diseñada y fue pensada para recibirlo: `checkout_lat`,
 `checkout_lng`, `checkout_time`, `hora_programada`, `hora_llegada`,
-`checklist_ok`, `calificacion_cliente`, `retrabajo`, `simpliroute_visit_id`.
-Todos los campos correctos. Ninguno con datos.
+`checklist_ok`, `calificacion_cliente`, `retrabajo`, `simpliroute_visit_id`,
+`source`. Todos los campos correctos. Ninguno con datos.
+
+**No es un problema de captura, es de integración.** Ver `06` §AUT-07.
 
 ### Tipos (ya catalogados en `tipos_servicio_modificador`)
 | Clave | Modificador de tarifa | Facturable |
@@ -169,15 +176,20 @@ justo los que hay que perseguir.
 - Un servicio completado **requiere evidencia**.
 - Un servicio no puede completarse sin operador asignado.
 - Un servicio de limpieza debe tener al menos una unidad asociada.
-- Un servicio solo es facturable si el contrato tiene cobro pagado.
 - ⚠️ **Un servicio hoy liga a una sola unidad** (`servicios.unidad_id`).
   Pero una obra tiene varias unidades y se sirven en una sola visita.
   Debe ser relación N:N (§13 de EcoSan).
 
+⚠️ **El servicio ya NO es el disparador de la factura.** GP factura mensual por
+contrato, así que el servicio queda como registro operativo puro: cumplimiento,
+productividad, consumo de insumos y evidencia ante reclamos. Es una separación
+más limpia que la que se había construido.
+
 ### Evidencia
 Hoy: un campo `foto_url`. Se necesita tabla propia con tipos
 `foto_antes` · `foto_despues` · `firma` · `incidencia` · `documento`,
-cada una con coordenada, autor y momento de captura.
+cada una con coordenada, autor y momento de captura — que es justo lo que
+SimpliRoute ya captura.
 
 ### Eventos
 `servicio.programado` · `servicio.asignado` · `servicio.iniciado` ·
@@ -191,8 +203,11 @@ cada una con coordenada, autor y momento de captura.
 
 ### Estado actual
 ⚠️ `rutas` y `ruta_servicios` existen y están vacías. La operación real vive en
-**SimpliRoute**. La tabla ya tiene `simpliroute_id` y `simpliroute_url`: el
-puente está previsto, no construido.
+**SimpliRoute**, igual que los servicios. La tabla ya tiene `simpliroute_id` y
+`simpliroute_url`: el puente está previsto, no construido.
+
+**Es el mismo puente que el de servicios**, no uno aparte: la misma llamada a la
+API de SimpliRoute trae la ruta, sus paradas y la ejecución de cada visita.
 
 ### Lo que falta para medir
 `distancia_planeada` · `distancia_real` · `duracion_planeada` · `duracion_real`
@@ -236,13 +251,29 @@ servicios_por_facturar  exige  cobros.estado = 'pagado'
 Esto no es un bug: es la regla de prepago funcionando correctamente sobre datos
 incompletos. **Se arregla registrando pagos, no cambiando la vista.**
 
+### La unidad de facturación es el COBRO, no el servicio
+
+**Confirmado por Eduardo (2026-08-17): GP factura mensual por contrato.**
+
+Verificado en la base: `cobros` es exactamente **1 por contrato por periodo**
+(156 en agosto, 156 en septiembre) y su monto coincide al centavo con
+`contratos.monto_mensual` en los 126 casos donde ese campo existe. La estructura
+mensual ya es correcta; `facturas.cobro_id` ya existe para colgar la factura ahí.
+
+⚠️ `gp-flujo-facturacion` se construyó emitiendo **por servicio**. Es la
+granularidad equivocada y hay que corregirla. Ver `06` §AUT-01.
+
 ### Reglas de negocio
 - Cobro anticipado: el pago precede al servicio.
+- **La factura cuelga del `cobro` (mensual), no del `servicio`.**
 - `FACTURA` lleva IVA 16% y se timbra CFDI; `REMISION` no lleva IVA.
-- Un servicio se comprueba una sola vez (índice único ya creado).
 - El recargo por zona se resuelve con PostGIS sobre la coordenada del checkout;
   si falta, se usa la del contrato.
-- ⚠️ Falta modelar **qué razón social emite** (Torreón / Saltillo).
+- **GP solo factura lo suyo.** Los 10 contratos de las empresas hermanas
+  (Torreón, Saltillo) tienen administración aparte: se marcan y se excluyen,
+  no se timbra por ellos. Ver `04-modelo-datos` §Cambio 3.
+- Los servicios `EXTRA` (modificador 1.50) probablemente sí se cobran fuera del
+  mensual `[?]` — falta confirmarlo.
 
 ### Eventos
 `cobro.generado` · `cobro.pagado` · `cobro.vencido` · `factura.timbrada` ·
@@ -259,7 +290,8 @@ incompletos. **Se arregla registrando pagos, no cambiando la vista.**
 sucursal, consumo estándar (26 recetas BOM), ledger de movimientos con
 idempotencia, consumo declarado que sobreescribe al estimado.
 
-⛔ `movimientos_insumo` = 0 filas. Se alimenta al cerrar ruta, y no hay rutas.
+⛔ `movimientos_insumo` = 0 filas. Se alimenta al cerrar ruta, y no hay rutas
+en Supabase — aunque sí las hay en SimpliRoute.
 
 Es el mejor ejemplo del patrón general de GP: **la ingeniería está adelante de
 los datos.**
@@ -275,10 +307,13 @@ los datos.**
 `direccion` · `operaciones` · `despacho` · `cobranza` · `operador` · `cliente`
 
 ### Por qué importa ya
-El operador captura en AppSheet y el cliente pregunta por WhatsApp. En cuanto
-esos dos flujos escriban en Supabase, **necesitan identidad y permiso propios**.
-Un operador no debe ver precios ni cartera; un cliente solo lo suyo.
+El cliente pregunta por WhatsApp y las integraciones escriben desde fuera. En
+cuanto esos flujos toquen Supabase, **necesitan identidad y permiso propios**.
+Un token de integración no debe poder leer precios ni cartera; un cliente solo lo suyo.
 
 Como se advierte en `01-modelo-empresa`, en GP una persona cruza varios puestos.
 Por eso conviene modelar **permisos** (`servicio.completar`, `factura.emitir`,
 `cliente.leer`) y componer roles con ellos, no al revés.
+
+⚠️ Riesgo adicional: esta base contiene contratos de **empresas de terceros**
+(las hermanas). Un rol mal acotado expondría precios que ni siquiera son de GP.
