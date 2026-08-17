@@ -11,11 +11,13 @@
 |---|---|
 | Giro | Renta, servicio y fabricación de sanitarios portátiles |
 | Antigüedad | +7 años de operación |
-| Plazas | Monterrey, N.L. (principal) · Santiago de Querétaro, Qro. (sucursal) |
-| Flota | 437 unidades registradas (429 propias de GP, 8 propiedad de cliente) |
+| Plazas | Monterrey, N.L. (esta base) · Santiago de Querétaro, Qro. (**se lleva aparte**) |
+| Flota | 437 unidades registradas en MTY (429 propias de GP, 8 propiedad de cliente) |
 | Cartera activa | 194 contratos · ~100 clientes reales |
 | Modelo de cobro | **Anticipado (prepago)** — sin pago confirmado no se genera servicio |
-| Facturación contratada | $1,925,770 MXN en cobros julio–septiembre 2026 |
+| Ciclo de facturación | **Mensual por contrato** (no por servicio) |
+| Renta mensual contratada | $1,028,964 MXN, de los cuales **$1,006,808 son de GP** y $22,156 de empresas hermanas |
+| Registro de campo | **SimpliRoute** (rutas y servicios ejecutados) |
 
 ### Segmentos que atendemos
 Construcción y obra · industrial · eventos · gobierno.
@@ -64,6 +66,10 @@ permisos (§29 de EcoSan) deben modelarse por **permiso**, no por puesto.
 ⚠️ Los 5 tienen `sucursal_id` en **NULL**. No se puede saber por la base quién
 opera en qué plaza.
 
+⚠️ **Juan Pablo opera en QRO**, que se lleva aparte. Marcarlo como MTY ensuciaría
+la productividad por operador; hay que decidir si se desactiva en esta base o se
+deja sin plaza a propósito. Ver `04-modelo-datos` §Cambio 5.
+
 ---
 
 ## Productos y modalidades
@@ -99,17 +105,30 @@ El calendario de servicios se genera desde aquí.
 
 ## Comprobación fiscal
 
-| Tipo | Contratos | Lleva IVA | Documento |
-|---|---:|---|---|
-| `FACTURA` | 158 | Sí (16%) | CFDI 4.0 timbrado |
-| `REMISION` | 25 | No | Comprobante interno |
-| `FACTURA TORREON` | 8 | Sí | CFDI de **otra razón social** `[?]` |
-| `FACTURA SALTILLO` | 2 | Sí | CFDI de **otra razón social** `[?]` |
-| `nan` | 1 | — | Basura de importación, eliminar |
+| Tipo | Contratos | Lleva IVA | Documento | ¿Es de GP? |
+|---|---:|---|---|---|
+| `FACTURA` | 158 | Sí (16%) | CFDI 4.0 timbrado | ✅ |
+| `REMISION` | 25 | No | Comprobante interno | ✅ |
+| `FACTURA TORREON` | 8 | Sí | CFDI de **empresa hermana** | ❌ |
+| `FACTURA SALTILLO` | 2 | Sí | CFDI de **empresa hermana** | ❌ |
+| `nan` | 1 | — | Basura de importación, eliminar | — |
 
-`[?]` **Pendiente de confirmar con Eduardo:** si Torreón y Saltillo son entidades
-emisoras con RFC propio. Las obras de esos contratos están en Nuevo León, así que
-**no** son plazas de operación.
+**Confirmado por Eduardo (2026-08-17):** Torreón y Saltillo son **razones sociales
+de empresas hermanas de familiares, con administración y finanzas aparte**.
+No son plazas de operación (sus obras están en Nuevo León) ni divisiones de GP.
+
+**Consecuencia:** sus 10 contratos comparten esta base pero **su dinero no es de
+GP**. Toda métrica de ingreso debe excluirlos. Ver `04-modelo-datos` §Cambio 3.
+
+### Facturación: mensual por contrato
+
+**Confirmado por Eduardo:** GP emite **un comprobante mensual por contrato**, no
+uno por servicio realizado. La tabla `cobros` ya lo refleja correctamente —
+exactamente 1 cobro por contrato por periodo, con el monto igual a
+`monto_mensual` al centavo en los 126 casos donde ese campo existe.
+
+Los servicios `EXTRA` (modificador 1.50) probablemente sí se cobran aparte;
+falta confirmarlo.
 
 ---
 
@@ -141,10 +160,16 @@ accionable del negocio y hoy no lo reporta ningún tablero.
    revisión obligatorias entre colocaciones.
 3. **Toda unidad tiene código único** (`MTY-XXX`). Es la identidad que cruza
    Supabase, el Excel de rutas y las geocercas del GPS.
-4. **La plaza importa.** MTY y QRO tienen rutas, tiempos y operadores distintos.
-   Toda métrica debe poder separarse por plaza — hoy no puede.
+4. **Esta base es de Monterrey.** QRO opera pero se lleva aparte (decisión de
+   Eduardo, 2026-08-17). Aun así toda entidad lleva `sucursal_id`, para que
+   incorporar QRO algún día sea un `INSERT` y no una migración.
 5. **No toda unidad en campo es activo de GP.** Las 8 de `propietario = CLIENTE`
    se excluyen del cálculo de utilización y de ingreso por activo.
+6. **No todo contrato en esta base es de GP.** Los 10 de las empresas hermanas
+   (Torreón y Saltillo) se excluyen de toda métrica de ingreso.
+7. **El registro de campo vive en SimpliRoute.** El operador cierra ahí su visita
+   con hora, coordenada y evidencia. Supabase debe recibirlo por integración, no
+   pedirle al operador que capture dos veces.
 
 ---
 
@@ -158,9 +183,15 @@ Ingreso mensual recurrente
 unidades PROPIAS de GP en campo
 ```
 
-Numerador: `SUM(contratos.monto_mensual)` de contratos activos.
+Numerador: `SUM(contratos.monto_mensual)` de contratos activos **de GP**
+(excluyendo los 10 de las empresas hermanas: −$22,156 al mes).
 Denominador: `COUNT(unidades)` con `estatus='EN_CAMPO' AND propietario='GP'`.
 
-⚠️ Hoy no es calculable con confianza: **33 contratos no tienen `monto_mensual`**.
+Dos exclusiones, dos motivos distintos:
+- **Unidades de cliente** (8): no son activo de GP, no van en el denominador.
+- **Contratos de las hermanas** (10): su dinero no es de GP, no va en el numerador.
+
+⚠️ Hoy no es calculable con confianza: **33 contratos no tienen `monto_mensual`**,
+así que las cifras de renta contratada de este documento son el piso, no el total.
 Completar esos 33 campos es el trabajo más barato con mayor retorno analítico
 de toda la lista.
