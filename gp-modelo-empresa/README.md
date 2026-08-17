@@ -18,8 +18,8 @@ una a otra.
 | [`02-procesos-negocio.md`](02-procesos-negocio.md) | Los 6 procesos, con dónde se rompe cada uno | Datos + skills |
 | [`03-modelo-dominio.md`](03-modelo-dominio.md) | Entidades, estados, reglas y eventos por dominio | Datos reales |
 | [`04-modelo-datos.md`](04-modelo-datos.md) | 13 cambios de schema con SQL. **Nada aplicado** | Schema real |
-| [`05-arquitectura-sistema.md`](05-arquitectura-sistema.md) | Capas, stack, los 3 puentes que faltan, repo | Stack real |
-| [`06-mapa-automatizacion.md`](06-mapa-automatizacion.md) | 12 automatizaciones y qué bloquea cada una | n8n + módulos |
+| [`05-arquitectura-sistema.md`](05-arquitectura-sistema.md) | Capas, stack, los puentes que faltan, repo | Stack real |
+| [`06-mapa-automatizacion.md`](06-mapa-automatizacion.md) | 11 automatizaciones y qué bloquea cada una | n8n + módulos |
 | [`07-roadmap.md`](07-roadmap.md) | Fases 0 a 4, con métricas de avance | — |
 
 ---
@@ -57,11 +57,24 @@ sucursales              1       clientes          (no existe)
 
 ---
 
+## Decisiones de Eduardo · 2026-08-17
+
+| Pregunta | Respuesta | Efecto |
+|---|---|---|
+| ¿Dónde se registra un servicio? | **SimpliRoute** | El dato ya existe: hay que traerlo, no crearlo |
+| ¿Torreón y Saltillo? | **Empresas hermanas de familiares, finanzas aparte** | $22,156/mes que hoy cuenta la base **no son ingresos de GP** |
+| ¿Querétaro? | **Opera, pero se lleva aparte** | Este sistema es de Monterrey |
+| ¿Facturación? | **Mensual por contrato** | El flujo ya construido emite por servicio: hay que corregirlo |
+| ¿Cobranza a Supabase? | ⏳ Pendiente | Bloquea la conciliación y con ella la facturación |
+
+---
+
 ## Advertencias
 
 1. **Nada de `04-modelo-datos.md` está aplicado.** Es un plan para revisar. La
    base tiene 437 unidades, 194 contratos y 337 cobros reales en producción.
-2. **Hay 5 decisiones pendientes de Eduardo** (`07-roadmap.md` §Fase 0) que
-   cambian el diseño. Están marcadas `[?]` a lo largo de los documentos.
-3. La fase 1 **no agrega ninguna función nueva** y es la más valiosa: enciende
+2. La fase 1 **no agrega ninguna función nueva** y es la más valiosa: enciende
    tres módulos ya construidos que hoy muestran vacío.
+3. `gp-flujo-facturacion/` está construido con la **granularidad equivocada**
+   (por servicio, debe ser mensual por contrato). La fórmula de tarifa se
+   conserva; el disparador cambia. Ver `06-mapa-automatizacion` §AUT-01.
