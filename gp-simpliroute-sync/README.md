@@ -15,7 +15,7 @@ puente.**
 | Pieza | Dónde | Estado |
 |---|---|---|
 | Workflow de ingesta | n8n · [`MElK9Ce7E4ydHnGf`](https://grupoportatil.app.n8n.cloud/workflow/MElK9Ce7E4ydHnGf) | 🟡 Creado, **inactivo** |
-| Tabla de staging + config | `supabase/migrations/0001_staging_simpliroute.sql` | 🔴 **Sin aplicar** |
+| Tabla de staging + config | `supabase/migrations/0001_staging_simpliroute.sql` | 🟢 **Aplicada** en `gp-inventario` (2026-08-17) |
 | Consultas de descubrimiento | `supabase/02_descubrimiento.sql` | Listas |
 | Amarre y promoción | `supabase/03_amarre_y_promocion.sql` | 🔴 **Sin aplicar** |
 
@@ -53,17 +53,33 @@ la bandeja de revisión.
 
 ## Puesta en marcha
 
-### Paso 1 · Aplicar el staging
+### Paso 1 · Aplicar el staging — ✅ HECHO
 
-```sql
--- supabase/migrations/0001_staging_simpliroute.sql
-```
+Aplicado a `gp-inventario` el 2026-08-17 en tres migraciones:
+`staging_simpliroute`, `staging_simpliroute_endurecer` y
+`staging_simpliroute_desempate_determinista`.
 
-Crea `simpliroute_visitas_raw`, `simpliroute_config`, la vista
-`simpliroute_visitas_ultima` y dos índices únicos sobre `servicios` y `rutas`
-que garantizan idempotencia.
+Creó `simpliroute_visitas_raw`, `simpliroute_config`, la vista
+`simpliroute_visitas_ultima`, la función `sr_config()` y dos índices únicos
+sobre `servicios` y `rutas` que garantizan idempotencia.
 
-Es aditiva: no modifica ni migra datos existentes.
+Verificado tras aplicar:
+
+- Datos existentes intactos: 437 unidades, 194 contratos, 337 cobros,
+  192 colocaciones. `servicios` y `rutas` siguen en 0.
+- Prueba de humo en transacción con `rollback`: la deduplicación funciona y
+  la consulta de descubrimiento encuentra campos. La tabla quedó vacía.
+- El asesor de seguridad de Supabase quedó **sin hallazgos nuevos**.
+
+Dos defectos salieron en esa verificación y ya están corregidos:
+
+1. **La vista heredaba `SECURITY DEFINER`** (default de Supabase para vistas
+   creadas por el rol `postgres`), lo que anulaba el RLS de la tabla de abajo.
+   Ahora es `security_invoker`.
+2. **`distinct on ... order by ingestado_en desc` no era determinista.**
+   `now()` es la hora de inicio de transacción, así que dos versiones de la
+   misma visita en el mismo lote empataban y podía ganar la vieja. Se agregó
+   desempate por `id`.
 
 ### Paso 2 · Crear la credencial de SimpliRoute en n8n
 
