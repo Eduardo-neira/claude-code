@@ -17,6 +17,8 @@
 --
 -- Es ADITIVA: solo crea objetos nuevos y un índice único sobre `servicios`.
 -- No modifica ni migra ningún dato existente.
+--
+-- APLICADA a gp-inventario el 2026-08-17.
 -- =====================================================================
 
 -- ---------------------------------------------------------------------
@@ -45,14 +47,25 @@ create index if not exists idx_sr_raw_fecha   on simpliroute_visitas_raw (fecha_
 create index if not exists idx_sr_raw_ingesta on simpliroute_visitas_raw (ingestado_en desc);
 
 -- Última versión conocida de cada visita.
+--
+-- El desempate por `id` NO es decorativo: `now()` es la hora de inicio de
+-- transacción, así que dos versiones de la misma visita insertadas en el mismo
+-- lote comparten `ingestado_en`, el ORDER BY empata y `distinct on` elegiría
+-- una fila arbitraria — puede ganar la vieja. `id` es identity monotónico y
+-- desempata siempre a favor de la última insertada.
 create or replace view simpliroute_visitas_ultima as
 select distinct on (visita_id)
   id, visita_id, ruta_id, fecha_planeada, payload, ingestado_en
 from simpliroute_visitas_raw
-order by visita_id, ingestado_en desc;
+order by visita_id, ingestado_en desc, id desc;
+
+-- Sin esto la vista hereda SECURITY DEFINER (default de Supabase para vistas
+-- creadas por el rol postgres) y NO respeta el RLS de quien la consulta,
+-- anulando la protección de la tabla de abajo.
+alter view simpliroute_visitas_ultima set (security_invoker = on);
 
 comment on view simpliroute_visitas_ultima is
-  'Una fila por visita: la ingesta más reciente. Es la vista que consumen el amarre y la promoción.';
+  'Una fila por visita: la ingesta más reciente (desempate determinista por id). Es la vista que consumen el amarre y la promoción.';
 
 -- ---------------------------------------------------------------------
 -- 2. Configuración del puente
@@ -94,6 +107,10 @@ returns text language sql stable as $$
   select valor from simpliroute_config where clave = p_clave;
 $$;
 
+-- search_path fijo: sin esto un rol podría anteponer un esquema propio y
+-- hacer que la función lea de otra tabla `simpliroute_config`.
+alter function sr_config(text) set search_path = public, pg_temp;
+
 -- ---------------------------------------------------------------------
 -- 3. Idempotencia sobre `servicios`
 -- ---------------------------------------------------------------------
@@ -118,3 +135,9 @@ alter table simpliroute_config      enable row level security;
 
 -- Sin políticas para anon/authenticated: solo la service_role (que las
 -- ignora) puede leer y escribir. Es lo que usa n8n.
+
+-- Cinturón adicional al RLS: no hay razón para que anon o authenticated
+-- puedan siquiera intentar leer staging.
+revoke all on simpliroute_visitas_raw     from anon, authenticated;
+revoke all on simpliroute_config          from anon, authenticated;
+revoke all on simpliroute_visitas_ultima  from anon, authenticated;
