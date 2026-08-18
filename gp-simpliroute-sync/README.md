@@ -93,9 +93,13 @@ instancia. En n8n, credencial tipo **Header Auth**:
 
 Y asignarla al nodo *Traer Visitas de SimpliRoute*.
 
-⚠️ El esquema `Token <key>` es el que usa SimpliRoute. Si tu panel muestra otro
-formato, ajusta el valor — el nombre del header casi siempre sigue siendo
-`Authorization`.
+✅ **Esquema confirmado** (2026-08-18): `authorization: Token <api_key>`, contra
+`https://api.simpliroute.com/v1/`. Ya no es una suposición.
+
+⚠️ La API de SimpliRoute **no es alcanzable desde las sesiones de Claude Code**:
+el proxy de egreso responde 403 al CONNECT hacia `api.simpliroute.com:443`. Por
+eso las llamadas las hace n8n, que tiene su propia salida a internet — y por eso
+el descubrimiento del schema (paso 4) se hace leyendo Supabase, no la API.
 
 ### Paso 3 · Una corrida manual
 
