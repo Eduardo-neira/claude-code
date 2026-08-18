@@ -1,0 +1,60 @@
+# Chatbot de Atención al Cliente — Implementación (Grupo Portátil)
+
+Registro de lo montado en el entorno real de GP. Complementa el diseño (`chatbot-atencion-cliente-gp.md`) y el contenido inicial (`chatbot-contenido-inicial-gp.md`).
+
+## Supabase (proyecto `gp-inventario`)
+
+El esquema se alineó a la estructura real: los clientes viven como texto en `contratos`, las plazas son `sucursales` (hoy solo MTY, id 1) y los precios son por-contrato. Tablas nuevas (prefijo `chatbot_`, RLS activo, sin políticas públicas → solo accesibles con service role):
+
+| Tabla | Uso | Estado inicial |
+|---|---|---|
+| `chatbot_faq` | Base de conocimiento para FAQ | 18 FAQ cargadas |
+| `chatbot_tarifas` | Tarifas de referencia para cotizar | 5 filas (MTY) con **precio en null** |
+| `chatbot_solicitudes` | Solicitudes capturadas por el bot | vacía · `folio` autogenerado `SOL-YYYY-####` |
+| `chatbot_conversaciones` | Estado/log por teléfono | vacía |
+
+FKs reales: `sucursal_id → sucursales(id)`, `contrato_id → contratos(id)`.
+
+## n8n (workflow `GP · Chatbot Atención al Cliente`)
+
+- **ID:** `dnD13Xduno1cVg2j` · **Estado:** publicado (activo)
+- **Endpoint (producción):** `POST https://grupoportatil.app.n8n.cloud/webhook/gp-chatbot-wa`
+- **Flujo:** `Webhook (WhatsApp) → Normalizar Mensaje → Agente Atención GP → Enviar WhatsApp (Twilio) → Responder al Gateway`
+- **Agente (AI Agent + Claude/Anthropic)** con memoria por teléfono y 4 herramientas:
+  - `Consultar_FAQ` (Supabase · lee `chatbot_faq`)
+  - `Consultar_Tarifas` (Supabase · lee `chatbot_tarifas`)
+  - `Registrar_Solicitud` (Supabase · inserta en `chatbot_solicitudes`)
+  - `Escalar_A_Humano` (Gmail · correo a eduardo.neira@gportatil.com)
+- **Envío saliente:** nodo `Enviar WhatsApp (Twilio)` (n8n-nodes-base.twilio, `toWhatsapp=true`, `onError=continuar`) envía la respuesta del agente al cliente. Requiere credencial `twilioApi` y el número WhatsApp de Twilio en el campo `From`. **Sin esa credencial el workflow no se puede activar** (guardado como borrador hasta conectarla).
+- **Credenciales:** reutiliza las existentes (Anthropic, Supabase, Gmail); pendiente crear la de Twilio.
+
+### Reglas clave codificadas en el agente
+- Precios **solo** desde `Consultar_Tarifas`; si el precio está en null, **no inventa** y escala.
+- Modelo **prepago**: la solicitud queda `pendiente_pago`; la entrega se programa al confirmar pago.
+- Escala a humano ante queja, incidencia, negociación, cobranza/factura compleja o petición explícita.
+- Distingue plaza (MTY `sucursal_id=1` / QRO).
+
+## Pruebas realizadas (agente en vivo, contra Claude + Supabase)
+
+Se corrió el agente de extremo a extremo con 3 mensajes simulados. Con precios de prueba temporales (ya revertidos a null):
+
+| Caso | Mensaje | Resultado |
+|---|---|---|
+| Cotización | "¿cuánto cuesta un baño estándar al mes en Apodaca?" | Devolvió el precio real de `chatbot_tarifas`, detectó plaza MTY y avanzó a agendar. ✅ |
+| Escalamiento | "llevo 3 días esperando que recojan el baño… pésimo servicio" | Detectó la queja, respondió con empatía y disparó `Escalar_A_Humano` con correo bien armado (teléfono, plaza, motivo, contexto). Lógica ✅ |
+| Anti-invención | "un baño tipo evento por todo el mes, ¿cuánto al mes?" (precio en null) | NO inventó el precio; avisó que lo confirma con el equipo y escaló. ✅ |
+
+**Hallazgo:** el correo de escalamiento se compone bien pero **no se envía**: la credencial **Gmail account** en n8n está desconectada (token OAuth expirado/revocado). Error: *"The credential 'Gmail account' needs to be reconnected."* Se debe **reconectar la credencial de Gmail** en n8n. Claude y Supabase funcionaron sin problema.
+
+> Los precios de prueba se revirtieron a null tras validar; la base no contiene números falsos.
+
+## Pendientes para producción real
+
+1. **Cargar precios reales** en `chatbot_tarifas` (mientras estén en null, el bot escala en vez de cotizar).
+2. **Conectar el canal WhatsApp:** (a) apuntar Twilio al endpoint del webhook para la entrada; (b) crear la credencial `twilioApi` en n8n y poner el número WhatsApp de Twilio en el campo `From` del nodo `Enviar WhatsApp (Twilio)`; (c) publicar el workflow para activar el envío saliente.
+3. **Alta de QRO** en `sucursales` cuando aplique.
+4. **Prueba piloto** con un grupo chico para validar FAQ faltantes y el enrutamiento de escalamiento.
+
+## Nota de seguridad (Supabase)
+
+El advisor de Supabase reporta que `public.spatial_ref_sys` (tabla del sistema PostGIS, preexistente, no creada por el chatbot) tiene RLS desactivado. No se modificó. Si se quiere restringir, evaluar habilitar RLS con políticas adecuadas — fuera del alcance de este chatbot.
