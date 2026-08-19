@@ -1,0 +1,21 @@
+Estimado(a) {{ invoice.client_name }}:
+
+Segundo aviso de cobranza.
+
+La factura {{ invoice.invoice_id }} por {{ amount_display }} venció el
+{{ due_date_display }} y acumula {{ days_overdue }} días de mora. Hasta el día
+de hoy no hemos identificado su pago.
+
+Le solicitamos ponerse al corriente a la brevedad. Si existe algún
+inconveniente con el pago, con gusto podemos revisar opciones; por favor
+comuníquese con nuestro equipo de cobranza.
+{% if invoice.payment_link %}
+Pague en línea: {{ invoice.payment_link }}
+{% endif %}{% if company.payment_instructions %}
+{{ company.payment_instructions }}
+{% endif %}
+Si ya realizó el pago, envíenos su comprobante para conciliar su cuenta.
+
+{{ company.signature or company.name }}
+{% if company.phone %}Tel: {{ company.phone }}{% endif %}
+{% if company.collections_email %}Cobranza: {{ company.collections_email }}{% endif %}

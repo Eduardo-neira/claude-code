@@ -1,0 +1,8 @@
+{% extends "_email_base.html.j2" %}
+{% set accent = "#c98a00" %}
+{% block heading %}Su factura vence hoy{% endblock %}
+{% block intro %}
+  <p style="margin:0 0 12px;">Le recordamos que la siguiente factura vence
+  <strong>hoy, {{ due_date_display }}</strong>. Para evitar recargos o suspensión
+  del servicio, le agradeceremos realizar su pago el día de hoy.</p>
+{% endblock %}

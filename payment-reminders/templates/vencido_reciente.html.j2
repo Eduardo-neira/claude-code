@@ -1,0 +1,9 @@
+{% extends "_email_base.html.j2" %}
+{% set accent = "#d9822b" %}
+{% block heading %}Factura vencida — {{ days_overdue }} día(s){% endblock %}
+{% block intro %}
+  <p style="margin:0 0 12px;">Nuestros registros indican que la siguiente factura,
+  con vencimiento el <strong>{{ due_date_display }}</strong>, presenta
+  <strong>{{ days_overdue }} día(s) de atraso</strong>. Le agradeceremos
+  regularizar su pago a la brevedad para mantener su cuenta al corriente.</p>
+{% endblock %}

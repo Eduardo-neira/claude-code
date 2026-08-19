@@ -1,0 +1,14 @@
+{% extends "_email_base.html.j2" %}
+{% set accent = "#c0392b" %}
+{% block heading %}Segundo aviso de cobranza{% endblock %}
+{% block intro %}
+  <p style="margin:0 0 12px;">La siguiente factura venció el
+  <strong>{{ due_date_display }}</strong> y acumula
+  <strong>{{ days_overdue }} días de mora</strong>. Hasta el día de hoy no hemos
+  identificado su pago; le solicitamos ponerse al corriente a la brevedad.</p>
+{% endblock %}
+{% block extra %}
+  <p style="margin:0 0 12px; font-size:13px; color:#555;">Si existe algún inconveniente
+  con el pago, con gusto revisamos opciones. Por favor comuníquese con nuestro
+  equipo de cobranza.</p>
+{% endblock %}

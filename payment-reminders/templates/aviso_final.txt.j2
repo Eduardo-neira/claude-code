@@ -1,0 +1,23 @@
+Estimado(a) {{ invoice.client_name }}:
+
+AVISO FINAL DE COBRANZA.
+
+La factura {{ invoice.invoice_id }} por {{ amount_display }}, con vencimiento
+el {{ due_date_display }}, presenta {{ days_overdue }} días de mora y continúa
+pendiente de pago.
+
+Le solicitamos de la manera más atenta liquidar el adeudo dentro de los
+próximos días para evitar la suspensión del servicio y el inicio de gestiones
+de cobranza adicionales conforme a los términos acordados.
+{% if invoice.payment_link %}
+Pague en línea: {{ invoice.payment_link }}
+{% endif %}{% if company.payment_instructions %}
+{{ company.payment_instructions }}
+{% endif %}
+Si ya cubrió este adeudo, por favor envíenos de inmediato su comprobante para
+detener las gestiones de cobranza. Si requiere un convenio de pago,
+comuníquese con nuestro equipo de cobranza.
+
+{{ company.signature or company.name }}
+{% if company.phone %}Tel: {{ company.phone }}{% endif %}
+{% if company.collections_email %}Cobranza: {{ company.collections_email }}{% endif %}
