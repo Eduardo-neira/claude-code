@@ -17,6 +17,11 @@
 0 rutas, 0 facturas, 0 cobros conciliados). El blueprint EcoSan vale justo por la
 capa que a GP le falta.
 
+> **Actualización 2026-08-19.** El puente de SimpliRoute ya corre y `servicios`
+> dejó de estar vacía: **86 servicios** del 2026-08-18. La frase de arriba
+> describe el punto de partida, no el estado de hoy. Ver
+> [`gp-simpliroute-sync/HALLAZGOS.md`](../gp-simpliroute-sync/HALLAZGOS.md).
+
 ---
 
 ## 1. Estado real de la base de datos
@@ -36,7 +41,7 @@ Conteo real (no estimado) al 2026-08-17:
 | `geocercas` | 2 | Solo el seed de ejemplo, no las zonas reales |
 | `sucursales` | **1** | **Solo MTY** |
 | `perfiles` | 1 | Un solo usuario |
-| `servicios` | **0** | ⛔ **La tabla madre del negocio, vacía** |
+| `servicios` | 0 → **86** | 🟢 Se llena desde SimpliRoute (2026-08-19) |
 | `rutas` / `ruta_servicios` | 0 | Se opera en SimpliRoute, no se persiste |
 | `facturas` | 0 | Se factura en Facturama, no se persiste |
 | `mantenimientos` | 0 | No se registra |
@@ -46,16 +51,23 @@ Conteo real (no estimado) al 2026-08-17:
 
 ### El hallazgo que manda sobre todos los demás
 
-`servicios` está en **0 filas**. Tres módulos ya construidos y desplegados
+`servicios` estaba en **0 filas**. Tres módulos ya construidos y desplegados
 dependen de esa tabla:
 
 - `vista_desempeno_operadores` → el dashboard de operadores muestra vacío.
 - `servicios_por_facturar` → el flujo de facturación automática nunca dispara.
 - `movimientos_insumo` (cierre de ruta) → el inventario de insumos nunca descuenta.
 
-No es que estén mal hechos. Es que **están construidos sobre un río que todavía
-no corre**. Cualquier inversión en IA, BI o forecasting antes de resolver esto
-automatiza el vacío.
+No es que estén mal hechos. Es que **estaban construidos sobre un río que
+todavía no corría**. Cualquier inversión en IA, BI o forecasting antes de
+resolver esto automatiza el vacío.
+
+**Resuelto el 2026-08-19.** El puente trae las visitas que los operadores ya
+cerraban en SimpliRoute y las promueve a `servicios`. Al abrirlo salieron tres
+problemas de catálogo que estaban tapados justamente porque el río no corría:
+los lavamanos no existen en `unidades`, 11 sanitarios se sirven sin colocación
+registrada, y 8 colocaciones apuntan al cliente equivocado. Detalle en
+[`HALLAZGOS.md`](../gp-simpliroute-sync/HALLAZGOS.md).
 
 ---
 
@@ -71,7 +83,7 @@ automatiza el vacío.
 | 6 | Asignación de unidades | ✅ Sí | `contrato_unidades` (192 vigentes) |
 | 7 | Programación de servicios | ⚠️ Implícito | `frecuencia` = texto `LMV` / `MJS`. No hay calendario |
 | 8 | Ruta | ⚠️ Fuera | SimpliRoute. `rutas` vacía |
-| 9 | Servicio realizado | ⚠️ Fuera | **SimpliRoute.** `servicios` = 0 filas |
+| 9 | Servicio realizado | 🟢 Resuelto | **SimpliRoute** → `servicios` vía el puente |
 | 10 | Evidencia | ⚠️ Fuera | SimpliRoute. En la base, un solo campo `foto_url` |
 | 11 | Factura | ⚠️ Fuera | Facturama manual. `facturas` = 0 filas |
 | 12 | Cobranza | ⚠️ Fuera | Google Sheets `GP_Control_Financiero_2026`. `cobros` sin conciliar |
