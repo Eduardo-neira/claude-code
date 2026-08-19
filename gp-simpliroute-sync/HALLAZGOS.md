@@ -136,12 +136,38 @@ Dos patrones, los dos resueltos con `gp_norm()`:
 - Forma societaria con comas: `LC INFRAESTRUCTURA S,A DE C,V` contra
   `LC INFRAESTRUCTURA S.A DE C.V`.
 
-## 6. Operadores: sin mapear, a propósito
+## 6. Operadores: resuelto (2026-08-19)
 
-SimpliRoute usa **7 ids de driver**; GP tiene **5 operadores** registrados.
-Adivinar la correspondencia sería inventar quién hizo cada servicio, así que
-`simpliroute_operadores` quedó creada y **vacía**. Mientras tanto
-`servicios.operador` guarda `SR:<driver_id>`, que es trazable, y
-`operador_id` queda nulo.
+SimpliRoute usa **7 ids de driver**; GP tenía **5 operadores** registrados.
+La correspondencia no se puede deducir de los datos — la dio Eduardo:
 
-Es lo único que falta para que el dashboard de operadores funcione.
+| Driver | Vehículo | Operador | Trabajo |
+|---|---|---|---|
+| 385815 | 437587 | **Manuel (Meñito)** | ruta grande MTY |
+| 309312 | 424913 | **Juan Pablo** | ruta grande MTY |
+| 309311 | 424914 | **Emmanuel** | ruta grande MTY |
+| 324472 | 424912 | **Alberto** | fosas / pipa |
+| 309316 | 424910 | **Christian** | entregas y bajas |
+| 376983 | 437588 | — | Querétaro |
+| 327288 | 424911 | — | Querétaro |
+
+Dos ajustes al catálogo de operadores:
+
+- **Manuel es Meñito.** No se creó operador nuevo: al id 3 se le puso el
+  nombre real y el apodo quedó de alias.
+- **Christian se dio de alta** como operador propio, no como el comodín
+  "Extra" (id 5), que está marcado como cobertura temporal y no como persona.
+
+Los dos drivers de Querétaro quedan sin operador a propósito.
+
+### Lo que hay que cuidar al medir
+
+| Operador | Servicios | Pero además |
+|---|---|---|
+| Meñito, Emmanuel, Juan Pablo | 25 c/u | ruta de limpieza |
+| Alberto | 6 | **+7 fosas** que el modelo no representa |
+| Christian | 5 | son **retiros**, no ruta |
+
+Comparar a Alberto y a Christian contra los 25 de una ruta de limpieza haría
+ver bajo rendimiento donde hay otro trabajo. La métrica de desempeño necesita
+separarse por tipo antes de publicarse.

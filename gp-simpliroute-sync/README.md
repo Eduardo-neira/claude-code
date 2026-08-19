@@ -20,7 +20,7 @@ del día 2026-08-18.
 | Staging + config | `supabase/migrations/0001_staging_simpliroute.sql` | 🟢 Aplicada (2026-08-17) |
 | Descubrimiento del schema | `supabase/02_descubrimiento.sql` | 🟢 Corrido (2026-08-19) → [`HALLAZGOS.md`](HALLAZGOS.md) |
 | Amarre y promoción | `supabase/migrations/0002_amarre_y_promocion.sql` | 🟢 Aplicada (2026-08-19) |
-| Mapa de operadores | tabla `simpliroute_operadores` | 🔴 **Vacía — te toca** |
+| Mapa de operadores | `supabase/migrations/0003_mapa_operadores.sql` | 🟢 Aplicada (2026-08-19) |
 
 ---
 
@@ -56,7 +56,19 @@ De 123 visitas del 2026-08-18:
 | **Servicios creados** | **86** |
 
 86 servicios de 67 visitas porque una visita cubre varias unidades.
-82 completados, 4 fallidos; 81 LIMPIEZA y 5 RETIRO.
+82 completados, 4 fallidos; 81 LIMPIEZA y 5 RETIRO. Todos con operador:
+
+| Operador | Servicios | Completados | Tipo |
+|---|---|---|---|
+| Meñito (Manuel) | 25 | 24 | limpieza |
+| Emmanuel | 25 | 25 | limpieza |
+| Juan Pablo | 25 | 24 | limpieza |
+| Alberto | 6 | 4 | limpieza (+7 fosas fuera de alcance) |
+| Christian | 5 | 5 | retiros |
+
+**Cuidado al comparar.** Alberto hizo además 7 fosas que el modelo todavía no
+representa, y Christian hace movimientos, no ruta. Medirlos contra los 25 de
+una ruta de limpieza sería engañoso.
 
 El detalle de por qué, y qué salió mal en el catálogo, está en
 **[`HALLAZGOS.md`](HALLAZGOS.md)**. Vale la pena leerlo: el puente encontró
@@ -66,26 +78,12 @@ cosas que nadie sabía que faltaban.
 
 ## Lo que falta, en orden
 
-### 1. Mapear los operadores — bloquea el dashboard
-
-SimpliRoute usa 7 ids de driver, GP tiene 5 operadores. No se puede deducir
-quién es quién, así que la tabla quedó vacía a propósito:
-
-```sql
-select * from simpliroute_operadores;   -- 7 filas, operador_id nulo
-
-update simpliroute_operadores set operador_id = 4 where driver_id = '385815';
--- …y así con los 7
-```
-
-Mientras tanto `servicios.operador` guarda `SR:<driver_id>`.
-
-### 2. Dar de alta los lavamanos
+### 1. Dar de alta los lavamanos
 
 No existen en `unidades`. Números 302, 406, 420, 425, 428 — y no hay categoría
 `LAVAMANOS`. Ver `HALLAZGOS.md` §5.1.
 
-### 3. Revisar 16 unidades que el catálogo no ubica
+### 2. Revisar 16 unidades que el catálogo no ubica
 
 ```sql
 select * from simpliroute_unidades_faltantes;
@@ -94,7 +92,7 @@ select * from simpliroute_unidades_faltantes;
 11 sanitarios se sirven sin colocación registrada, y 9 de ellos dicen `BODEGA`
 mientras se sirven en obra.
 
-### 4. Corregir 8 colocaciones que apuntan al cliente equivocado
+### 3. Corregir 8 colocaciones que apuntan al cliente equivocado
 
 ```sql
 select * from simpliroute_conflictos_colocacion;
@@ -102,10 +100,10 @@ select * from simpliroute_conflictos_colocacion;
 
 **Si estas colocaciones están mal, la facturación de esos contratos también.**
 
-### 5. Programar la promoción
+### 4. Programar la promoción
 
 Hoy la ingesta es automática pero la promoción se corre a mano. Cuando los
-puntos 1-4 estén cerrados, agregar al workflow un nodo que llame a
+puntos 1-3 estén cerrados, agregar al workflow un nodo que llame a
 `simpliroute_promover()` después de guardar el crudo.
 
 ---
@@ -131,7 +129,6 @@ delete from servicios where source = 'simpliroute';
 - **No escribe en `servicios` desde n8n.** Esa decisión vive en SQL, donde se
   puede auditar y revertir.
 - **No inventa `contrato_id`.** Sin amarre, la visita se queda en revisión.
-- **No inventa operadores.** Ver punto 1.
 - **No borra ni actualiza el crudo.** Es append-only.
 - **No trae Querétaro** ni los servicios de fosa. QRO se lleva aparte por
   decisión tuya; las fosas son otra línea que el modelo de datos todavía no
