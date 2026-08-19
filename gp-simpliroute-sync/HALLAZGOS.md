@@ -171,3 +171,119 @@ Los dos drivers de Querétaro quedan sin operador a propósito.
 Comparar a Alberto y a Christian contra los 25 de una ruta de limpieza haría
 ver bajo rendimiento donde hay otro trabajo. La métrica de desempeño necesita
 separarse por tipo antes de publicarse.
+
+
+---
+
+# Segunda vuelta · conciliación del catálogo (2026-08-19)
+
+## 7. `contratos.num_sanitario` es una segunda fuente
+
+El hallazgo que ordenó todo lo demás. Ese campo dice qué unidad tiene cada
+contrato, es **independiente de `contrato_unidades`**, cubre **193 de 194**
+contratos activos, y está escrito en el mismo estilo desordenado que la
+referencia de SimpliRoute:
+
+| `num_sanitario` | Se lee como |
+|---|---|
+| `3 BAÑOS 1034,1035,1036  Y 1 LAVAMANOS 428  DE SU PROPIEDAD` | 1034, 1035, 1036, 428 |
+| `101310301032 1 LAVAMANOS 427` | 1013, 1030, 1032, 427 |
+| `862819736880` | 862, 819, 736, 880 |
+| `1 BAÑO ESTANDAR` | (ningún número) |
+
+`gp_numeros_unidad()` lo parsea. Extrae 195 números de los contratos activos y
+**los 195 existen en `unidades`** — parseo limpio, sin basura.
+
+Con tres fuentes (SimpliRoute, `contrato_unidades`, `num_sanitario`) ya se
+puede arbitrar en vez de suponer.
+
+## 8. Corrección: `contrato_unidades` no estaba desincronizada
+
+En la primera vuelta reporté que las 8 colocaciones en conflicto significaban
+que `contrato_unidades` estaba desactualizada. **Es incorrecto.** Al arbitrar
+con `num_sanitario`, las dos fuentes internas de GP **coinciden en los 8
+casos**. No hay desincronía entre tablas: el contrato completo dice lo mismo.
+
+La discrepancia es entre **Supabase y la realidad de campo**. Dos son
+concluyentes por distancia:
+
+| Unidad | Se sirvió a | El contrato dice | Distancia a la obra registrada |
+|---|---|---|---|
+| 1085 | CARLOS AUGUSTO LARA TORRES | JOEL MUÑOZ | **28.4 km** |
+| 869 | SUMINISTROS Y SERVICIOS ELECTRICOS | CONSTRUCCIONES Y URBANIZACIONES AL MAXIMO | **24.0 km** |
+
+Otras dos (733, 1015) son solo ortografía: `CARRELLO` contra `CARELLO`.
+Las cuatro restantes no se pueden verificar porque **el contrato no tiene
+coordenada** — el problema de los 60 contratos sin geolocalizar, mordiendo.
+
+## 9. Lavamanos: dados de alta
+
+Se cerró el hueco. Ocho lavamanos entraron a `unidades` con categoría
+`LAVAMANOS` y su colocación:
+
+| Número | Contrato | Cliente | Propietario |
+|---|---|---|---|
+| 402 | 115 | SLYRSA | GP |
+| 406 | 126 | SLYRSA | GP |
+| 420 | 96 | CARVID | GP |
+| 421 | 139 | GRUPO MYTE | GP |
+| 424 | 70 | FRIOCAL | GP |
+| 425 | 127 | SLYRSA | GP |
+| 427 | 194 | SOLUMAX | GP |
+| 428 | 58 | SOLUMAX | **CLIENTE** |
+
+El propietario no se supuso: `DE SU PROPIEDAD` en el texto del contrato →
+CLIENTE; `precio_lavamanos > 0` → GP.
+
+**El 302 no se dio de alta.** Aparece solo en SimpliRoute para SLYRSA, que en
+el contrato 115 tiene el 402. Es probable error de dedo en uno de los dos
+sistemas y crear ambos inventaría una unidad. **Requiere que alguien lo mire.**
+
+Efecto: el amarre pasó de **13.0 % a 10.4 %** sin amarrar, y los servicios de
+86 a **90** (4 de ellos de lavamanos, que antes no se registraban).
+
+## 10. Un cambio de unidad no registrado, confirmado
+
+`gp_cambios_de_unidad_no_registrados` clasifica en vez de afirmar, porque con
+un solo día de datos "la unidad registrada no se sirvió hoy" es lo **normal**:
+LC INFRAESTRUCTURA tiene 8 obras, la mitad en banda LMV y la otra en MJS.
+
+Solo hay un caso concluyente — cliente con una unidad registrada y una
+distinta servida, donde la banda no puede explicarlo:
+
+| Contrato | Cliente | Registrada | Servida |
+|---|---|---|---|
+| 120 | CONSTRUCCIONES Y PROYECTOS AXAN | **939** (EN_CAMPO desde abril) | **833** (dice BODEGA) |
+
+Alguien cambió la unidad en la obra y nadie lo registró. El 939 lleva desde
+abril marcado en campo sin que SimpliRoute lo vea nunca.
+
+## 11. Dos categorías mal en el catálogo
+
+La referencia de SimpliRoute también nombra la categoría, lo que permite
+auditarla. Solo dos discrepancias sobrevivieron a una verificación estricta
+(usando únicamente referencias con **un número y una etiqueta**, para no
+atribuir mal la etiqueta en referencias de varias unidades):
+
+| Unidad | Dice el operador | Dice el catálogo |
+|---|---|---|
+| 978 | EJECUTIVO | `DUPLICADO` |
+| 1019 | PREMIUM | `ESTANDARD` |
+
+**Las dos afectan precio**: PREMIUM y EJECUTIVO se cobran distinto que
+ESTANDARD. No se corrigieron — cambiar la categoría mueve la facturación y
+eso lo decide Eduardo.
+
+`DUPLICADO` y `TRIPLICADOS` no parecen categorías reales sino restos de
+captura; hay además 33 unidades con categoría nula.
+
+## 12. Lo que sigue necesitando decisión humana
+
+| Qué | Cuántos | Por qué no lo puedo resolver solo |
+|---|---|---|
+| 302 vs 402 (SLYRSA) | 1 | No sé cuál sistema tiene el error de dedo |
+| Unidades de CARVID y SOLUMAX sin colocación | 7 | El cliente tiene 3 obras activas; no sé en cuál está cada una |
+| Clientes sin contrato (CRAS ARQUITECTOS, JESÚS EDUARDO VÁZQUEZ AVALOS, GMOAL) | 3 | Alta de contrato = precio y fechas, decisión de negocio |
+| Categorías 978 y 1019 | 2 | Cambiarlas mueve la facturación |
+| Colocaciones en conflicto sin coordenada | 4 | El contrato no tiene geolocalización para verificar |
+| Cambio de unidad AXAN 939 → 833 | 1 | Confirmar y cerrar/abrir la colocación |

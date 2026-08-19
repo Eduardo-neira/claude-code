@@ -7,7 +7,7 @@ Es el cuello de botella identificado en
 `servicios` estaba en 0 filas y de esa tabla dependen el dashboard de
 operadores, el descuento de insumos y la facturación.
 
-**Ya no está en 0.** El 2026-08-19 se promovieron los primeros **86 servicios**
+**Ya no está en 0.** El 2026-08-19 se promovieron los primeros **90 servicios**
 del día 2026-08-18.
 
 ---
@@ -21,6 +21,7 @@ del día 2026-08-18.
 | Descubrimiento del schema | `supabase/02_descubrimiento.sql` | 🟢 Corrido (2026-08-19) → [`HALLAZGOS.md`](HALLAZGOS.md) |
 | Amarre y promoción | `supabase/migrations/0002_amarre_y_promocion.sql` | 🟢 Aplicada (2026-08-19) |
 | Mapa de operadores | `supabase/migrations/0003_mapa_operadores.sql` | 🟢 Aplicada (2026-08-19) |
+| Conciliación del catálogo | `supabase/migrations/0004_conciliacion_catalogo.sql` | 🟢 Aplicada (2026-08-19) |
 
 ---
 
@@ -51,11 +52,11 @@ De 123 visitas del 2026-08-18:
 |---|---|
 | Fuera de alcance (paradas de ruta, fosa, QRO) | 46 |
 | En alcance | 77 |
-| Amarradas | 67 |
-| Sin amarrar | 10 (13.0 %) |
-| **Servicios creados** | **86** |
+| Amarradas | 69 |
+| Sin amarrar | 8 (10.4 %) |
+| **Servicios creados** | **90** |
 
-86 servicios de 67 visitas porque una visita cubre varias unidades.
+90 servicios de 69 visitas porque una visita cubre varias unidades.
 82 completados, 4 fallidos; 81 LIMPIEZA y 5 RETIRO. Todos con operador:
 
 | Operador | Servicios | Completados | Tipo |
@@ -78,27 +79,45 @@ cosas que nadie sabía que faltaban.
 
 ## Lo que falta, en orden
 
-### 1. Dar de alta los lavamanos
+Todo esto está en `HALLAZGOS.md` §12 con el detalle de por qué.
 
-No existen en `unidades`. Números 302, 406, 420, 425, 428 — y no hay categoría
-`LAVAMANOS`. Ver `HALLAZGOS.md` §5.1.
+### 1. Un error de dedo por resolver: 302 vs 402
 
-### 2. Revisar 16 unidades que el catálogo no ubica
+SLYRSA aparece con el lavamanos **302** en SimpliRoute y **402** en el
+contrato 115. Se dio de alta el 402 (viene del contrato) y **no** el 302, para
+no inventar una unidad. Alguien tiene que decir cuál es.
+
+### 2. Siete unidades sin colocación, en clientes con varias obras
 
 ```sql
 select * from simpliroute_unidades_faltantes;
 ```
 
-11 sanitarios se sirven sin colocación registrada, y 9 de ellos dicen `BODEGA`
-mientras se sirven en obra.
+CARVID y SOLUMAX tienen 3 obras activas cada uno; no se puede deducir en cuál
+está cada unidad.
 
-### 3. Corregir 8 colocaciones que apuntan al cliente equivocado
+### 3. Tres clientes que se sirven sin contrato en la base
+
+CRAS ARQUITECTOS, JESÚS EDUARDO VÁZQUEZ AVALOS y MANTENIMIENTO Y
+CONSTRUCCIONES GMOAL. Dar de alta el contrato es decisión de negocio
+(precio, fechas).
+
+### 4. Dos categorías que mueven precio
 
 ```sql
-select * from simpliroute_conflictos_colocacion;
+-- 978 dice DUPLICADO, el operador dice EJECUTIVO
+-- 1019 dice ESTANDARD, el operador dice PREMIUM
 ```
 
-**Si estas colocaciones están mal, la facturación de esos contratos también.**
+No se corrigieron porque cambiar la categoría cambia lo que se cobra.
+
+### 5. Un cambio de unidad confirmado
+
+```sql
+select * from gp_cambios_de_unidad_no_registrados where confianza like 'alta%';
+```
+
+AXAN tiene registrado el **939** desde abril, pero se sirve el **833**.
 
 ### 4. Programar la promoción
 
@@ -114,6 +133,12 @@ puntos 1-3 estén cerrados, agregar al workflow un nodo que llame a
 select * from simpliroute_salud_amarre;              -- ¿cómo va el puente?
 select * from simpliroute_sin_amarre;                -- qué no amarró
 select * from simpliroute_promover(current_date - 1);
+
+-- conciliación del catálogo
+select * from simpliroute_unidades_faltantes;           -- unidades que el catálogo no ubica
+select * from simpliroute_conflictos_colocacion;        -- servida a otro cliente
+select * from gp_colocaciones_discrepantes;             -- las dos fuentes internas no coinciden
+select * from gp_cambios_de_unidad_no_registrados;      -- cambios de unidad (ver `confianza`)
 ```
 
 Todo se deshace sin perder nada — el crudo queda intacto:

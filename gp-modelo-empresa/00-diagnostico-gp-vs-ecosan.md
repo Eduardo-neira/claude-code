@@ -18,7 +18,7 @@
 capa que a GP le falta.
 
 > **Actualización 2026-08-19.** El puente de SimpliRoute ya corre y `servicios`
-> dejó de estar vacía: **86 servicios** del 2026-08-18. La frase de arriba
+> dejó de estar vacía: **90 servicios** del 2026-08-18. La frase de arriba
 > describe el punto de partida, no el estado de hoy. Ver
 > [`gp-simpliroute-sync/HALLAZGOS.md`](../gp-simpliroute-sync/HALLAZGOS.md).
 
@@ -41,7 +41,7 @@ Conteo real (no estimado) al 2026-08-17:
 | `geocercas` | 2 | Solo el seed de ejemplo, no las zonas reales |
 | `sucursales` | **1** | **Solo MTY** |
 | `perfiles` | 1 | Un solo usuario |
-| `servicios` | 0 → **86** | 🟢 Se llena desde SimpliRoute (2026-08-19) |
+| `servicios` | 0 → **90** | 🟢 Se llena desde SimpliRoute (2026-08-19) |
 | `rutas` / `ruta_servicios` | 0 | Se opera en SimpliRoute, no se persiste |
 | `facturas` | 0 | Se factura en Facturama, no se persiste |
 | `mantenimientos` | 0 | No se registra |
@@ -65,9 +65,9 @@ resolver esto automatiza el vacío.
 **Resuelto el 2026-08-19.** El puente trae las visitas que los operadores ya
 cerraban en SimpliRoute y las promueve a `servicios`. Al abrirlo salieron tres
 problemas de catálogo que estaban tapados justamente porque el río no corría:
-los lavamanos no existen en `unidades`, 11 sanitarios se sirven sin colocación
-registrada, y 8 colocaciones apuntan al cliente equivocado. Detalle en
-[`HALLAZGOS.md`](../gp-simpliroute-sync/HALLAZGOS.md).
+los lavamanos no existían en `unidades` (ya dados de alta), hay sanitarios que
+se sirven sin colocación registrada, y hay colocaciones que apuntan al cliente
+equivocado. Detalle en [`HALLAZGOS.md`](../gp-simpliroute-sync/HALLAZGOS.md).
 
 ---
 
