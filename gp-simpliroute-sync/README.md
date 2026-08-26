@@ -7,8 +7,7 @@ Es el cuello de botella identificado en
 `servicios` estaba en 0 filas y de esa tabla dependen el dashboard de
 operadores, el descuento de insumos y la facturación.
 
-**Ya no está en 0.** El 2026-08-19 se promovieron los primeros **90 servicios**
-del día 2026-08-18.
+**Ya no está en 0.** Al 2026-08-26 lleva **727 servicios** de 9 días de operación.
 
 ---
 
@@ -22,6 +21,7 @@ del día 2026-08-18.
 | Amarre y promoción | `supabase/migrations/0002_amarre_y_promocion.sql` | 🟢 Aplicada (2026-08-19) |
 | Mapa de operadores | `supabase/migrations/0003_mapa_operadores.sql` | 🟢 Aplicada (2026-08-19) |
 | Conciliación del catálogo | `supabase/migrations/0004_conciliacion_catalogo.sql` | 🟢 Aplicada (2026-08-19) |
+| Correcciones con 9 días | `supabase/migrations/0005_correcciones_9_dias.sql` | 🟢 Aplicada (2026-08-26) |
 
 ---
 
@@ -44,9 +44,27 @@ servicios
 
 Lo que no amarra **no se promueve**: se queda en `simpliroute_sin_amarre`.
 
-### Resultado de la primera corrida
+### Resultado tras 9 días (2026-08-26)
 
-De 123 visitas del 2026-08-18:
+| | |
+|---|---|
+| Visitas ingestadas | 1,116 |
+| Fuera de alcance (paradas, fosa, QRO) | 459 |
+| En alcance | 657 |
+| Amarradas | 572 |
+| Sin amarrar | 85 (12.9 %) |
+| **Servicios creados** | **727** |
+
+El 10.4 % del primer día era una muestra favorable: el 18 de agosto fue un día
+de banda MJS, y los días LMV amarran sistemáticamente peor.
+
+De las 85 sin amarrar, **42 son de clientes que no tienen contrato en la
+base** — ver `HALLAZGOS.md` §18. Eso no es un problema del puente.
+
+<details>
+<summary>Resultado de la primera corrida (2026-08-18)</summary>
+
+De 123 visitas:
 
 | | |
 |---|---|
@@ -57,6 +75,8 @@ De 123 visitas del 2026-08-18:
 | **Servicios creados** | **90** |
 
 90 servicios de 69 visitas porque una visita cubre varias unidades.
+
+</details>
 82 completados, 4 fallidos; 81 LIMPIEZA y 5 RETIRO. Todos con operador:
 
 | Operador | Servicios | Completados | Tipo |

@@ -287,3 +287,143 @@ captura; hay además 33 unidades con categoría nula.
 | Categorías 978 y 1019 | 2 | Cambiarlas mueve la facturación |
 | Colocaciones en conflicto sin coordenada | 4 | El contrato no tiene geolocalización para verificar |
 | Cambio de unidad AXAN 939 → 833 | 1 | Confirmar y cerrar/abrir la colocación |
+
+
+---
+
+# Tercera vuelta · 9 días de datos (2026-08-26)
+
+El workflow corrió sin fallar: **1,116 visitas en 9 días** contra las 123 del
+primer día. `servicios` pasó de 90 a **727**.
+
+Con 9 días salieron tres defectos que con uno no se veían — y uno de
+razonamiento mío.
+
+## 13. Corrección: `num_sanitario` NO era una segunda fuente
+
+En la vuelta anterior traté `contratos.num_sanitario` como una fuente
+**independiente** de `contrato_unidades`, y usé su acuerdo para arbitrar los 8
+conflictos de colocación.
+
+**Es falso.** Las 192 colocaciones originales tienen notas
+`backfill desde contratos.num_sanitario` y fecha **2026-08-12**: una fue
+derivada de la otra. Que coincidan no prueba nada.
+
+Por eso `gp_colocaciones_discrepantes` da **0 filas** — no porque el problema
+se haya resuelto, sino porque compara un dato consigo mismo. La vista quedó
+marcada como no apta para arbitrar.
+
+Lo que sí sigue siendo válido: **la verificación por distancia** contra
+`contratos.direccion_obra`, que es la que sostiene los dos casos confirmados
+(1085 a 28 km de su obra registrada, 869 a 24 km). SimpliRoute es la única
+fuente genuinamente independiente.
+
+## 14. PostGIS no estaba en el `search_path` — la rama de coordenada nunca corrió
+
+Defecto propio y silencioso. PostGIS está en el esquema `extensions`, no en
+`public`. Al fijar `search_path = public, pg_temp` en `simpliroute_amarrar()`
+—correcto por seguridad— quedó fuera, y el tipo `geography` dejó de
+resolverse dentro de la función.
+
+**La rama 3 del amarre nunca pudo ejecutarse.** No se detectó con un día
+porque todas las visitas amarraban antes de llegar ahí. Ya corregido: ahora
+amarra 3 visitas a 3-5 m, distancias muy ajustadas.
+
+## 15. Unidades en dos obras a la vez
+
+Dos unidades tienen **dos colocaciones activas simultáneas**, lo que es
+físicamente imposible:
+
+| Unidad | Colocación A | Colocación B |
+|---|---|---|
+| **807** | TEITER (2025-03-21) | TREVA (2025-12-08) |
+| **863** | contrato 99 · VICENTE SALAZAR (FERIA) | contrato 66 · **mismo cliente, misma fecha** |
+
+El 863 es un **contrato duplicado**. El 807 es un traslado donde nadie cerró
+la colocación anterior — y encima SimpliRoute lo reporta en **TREVA y en
+CAGPA la misma semana**, un tercer cliente que no aparece en ninguna de las
+dos colocaciones.
+
+Esto hacía tronar la promoción (`ON CONFLICT DO UPDATE cannot affect row a
+second time`). La corrección no fue elegir un contrato —sería facturarle a
+quien no es— sino marcar la unidad como ambigua y mandarla a revisión.
+
+Vista nueva: `gp_unidades_en_dos_contratos`.
+
+## 16. Las exclusiones se burlaban solas
+
+Los operadores escriben el título distinto cada vez, y los patrones fallaban:
+
+| Escrito | Patrón que no pegaba |
+|---|---|
+| `TRÁNSITO` (con acento) | `TRANSITO` |
+| `ESTACION GAS` | `ESTACION DE GAS` |
+| `CHECKLIST MANTENIMIENTO` | `CHECK LIST` |
+| `EMERGENTE` | `PUNTO EMERGENTE` |
+
+Más categorías que no existían el primer día: `REVISION DE ...`,
+`COBRANZA ...`, `ENTREGA E INSTALACION DE FOSA DE ...`.
+
+Ahora la comparación usa `gp_norm()`, así que el acento deja de importar.
+Verificado antes de aplicar: los 19 títulos afectados tienen **cero contratos
+activos**, así que no se excluye ningún cliente real.
+
+## 17. La tasa real de amarre es 12.9 %, no 10.4 %
+
+El 10.4 % de la vuelta anterior era una muestra favorable: el 18 de agosto fue
+martes, un día de banda **MJS**. Los días LMV amarran sistemáticamente peor.
+
+| Banda | Visitas por día | % sin amarrar |
+|---|---|---|
+| LMV (lun/mié/vie) | 164-177 | 12.5 – 20.4 % |
+| MJS (mar/jue/sáb) | 92-123 | 10.4 – 14.3 % |
+
+Sobre los 9 días: **657 visitas en alcance, 572 amarradas, 85 sin amarrar
+(12.9 %)**.
+
+## 18. El hallazgo de fondo: clientes servidos sin contrato
+
+De las 85 sin amarrar, la mayor parte no es un problema técnico:
+
+| | Clientes | Visitas |
+|---|---|---|
+| Cliente **sin contrato activo** en la base | 17 | 42 |
+| Cliente con contrato, pero la unidad no amarra | 8 | 31 |
+| Lavamanos aún no dado de alta | 2 | 12 |
+
+Ocho clientes reciben servicio de forma regular y **no tienen contrato en
+Supabase**:
+
+| Cliente | Días servido | Unidad |
+|---|---|---|
+| JESÚS EDUARDO VÁZQUEZ AVALOS | 5 | #871 |
+| CRAS ARQUITECTOS | 4 | #1017 |
+| OSCAR SAUL MARTINEZ SALINA | 4 | #790 |
+| DIOSDADO EDUARDO AGUIRRE PADILLA (CAGPA) | 3 | #807 |
+| MANTENIMIENTO Y CONSTRUCCIONES GMOAL | 2 | #1019 PREMIUM |
+| JESUS ALEJANDRO RIVERA CORONEL | 2 | #859 |
+| COCONAL | 2 | #1021 #1026 PREMIUM |
+| CORPORACION ELÉCTRICA DEL BRAVO | 2 | — |
+
+**`cobros` cuelga de `contrato_id`.** Sin contrato no puede haber cobro en
+este sistema. Falta confirmar si se les está facturando por otra vía (Sheets,
+Facturama directo) o si de plano no se les está cobrando.
+
+Dos que *parecían* estar en esta lista sí tienen contrato y lo que falla es el
+nombre — vale la pena arreglarlo antes de dar de alta nada:
+
+- `VICENTE SALAZAR VALENCIA (FERIA) SE REUBICO AQUÍ 07-08-2026` → contratos
+  66 y 99. El texto de reubicación pegado al nombre rompe la comparación.
+- `FLETES INDUSTRIALES` → contrato 84 `FLETES INDUSTRIALES REGIOMONTANOS`.
+
+## 19. Sigue pendiente de decisión humana
+
+Nada de esto se resolvió solo con más días, porque no era cuestión de datos:
+
+| Qué | Estado |
+|---|---|
+| 302 vs 402 de SLYRSA | igual, sigue sin resolverse |
+| Categorías 978 y 1019 (mueven precio) | igual, sin tocar |
+| 8 clientes sin contrato | **creció**: eran 3, ahora son 8 |
+| Unidades 807 y 863 en dos obras | **nuevo** |
+| CARVID: 20 visitas en 8 días sin amarrar | el más grande; tiene 3 obras activas |
